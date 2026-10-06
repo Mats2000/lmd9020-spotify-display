@@ -20,6 +20,6 @@ struct Canvas {
     void blend(int x, int y, RGB c, int a) {
         if ((unsigned)x >= (unsigned)W || (unsigned)y >= (unsigned)H || a <= 0) return;
         uint8_t* p = &rows[y][x];
-        *p = a >= 256 ? toRGB332(c) : toRGB332(lerp(fromRGB332(*p), c, a));
+        *p = toRGB332Clean(a >= 256 ? c : lerp(fromRGB332(*p), c, a));
     }
 };

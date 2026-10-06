@@ -65,7 +65,7 @@ def save(exe, args, name, ms, gif):
 
 
 SAVERS = ["waves", "sphere", "vinyl", "ridges", "vfd", "wired", "haze", "network", "tunnel", "scope",
-          "terminal", "static", "navi", "redsky", "psyche", "crossing"]  # src/render/savers.h order
+          "terminal", "static", "navi", "redsky", "psyche", "crossing", "rain", "contours", "currents"]  # src/render/savers.h order
 
 
 def decoded_cover(path, raw):
@@ -75,6 +75,8 @@ def decoded_cover(path, raw):
     while size // 2 >= art_h:
         size //= 2
     img = Image.open(path).convert("RGB").resize((640, 640), Image.LANCZOS)
+    with open(raw + ".thumb", "wb") as f:  # Spotify's 64 px size, for the cover's own colours
+        f.write(img.resize((64, 64), Image.LANCZOS).tobytes())
     img = img.resize((size, size), Image.BOX)
     with open(raw, "wb") as f:
         f.write(img.tobytes())

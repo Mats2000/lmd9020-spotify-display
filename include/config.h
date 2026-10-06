@@ -10,6 +10,17 @@
 // Video pin: 25 or 26 (both DACs carry the same picture). This board's 25 is damaged.
 #define VIDEO_GPIO 26
 
+// Composite colour: 1.0 = standard NTSC strength (the original library ran at about 0.43),
+// plus a hue trim in degrees.
+#define NTSC_SATURATION 1.0f
+#define NTSC_HUE 0.0f
+// Standard NTSC, the format the LMD-9020's composite input is specified for: 480i (525 lines,
+// interlaced, 59.94 fields/s) with 227.5 colour cycles per line. The second field shows each
+// line blended with the next, as it sits half a line lower. 0 and 0 give the original
+// library's 240p.
+#define NTSC_STANDARD_LINE 1
+#define NTSC_INTERLACE 1
+
 // Width/height of one pixel on screen: 1.273 for 4:3 NTSC, 1.70 stretched to 16:9.
 // Rerun tools/make_fonts.py after changing it.
 #define DISPLAY_PIXEL_ASPECT 1.273f
@@ -49,11 +60,21 @@
 #define SAVER_REDSKY 1    // rooftops and crows on the wires against a blood-red dusk
 #define SAVER_PSYCHE 1    // the clock as a chip label, circuit traces pulsing outward
 #define SAVER_CROSSING 0  // a night street crossing, the walk signal cycling
+#define SAVER_RAIN 1         // a bus window at night: blurred city lights, drops running down
+#define SAVER_CONTOURS 1     // a survey map of a landscape that slowly reshapes itself
+#define SAVER_CURRENTS 1     // a wind map: fine streaks riding a turning flow
 
 // ---- Sleep -----------------------------------------------------------------
 
 // Minutes with nothing playing before the video signal turns off. 0 = never.
 #define SLEEP_AFTER_MINUTES 60
+
+// Full-screen TV snow keeps the LCD from holding an image (ghosting): this long after the
+// music stops, for the last minutes before sleep, and for a while when the board's BOOT
+// button is pressed (press again to stop).
+#define REFRESH_AFTER_MUSIC_SECONDS 15
+#define REFRESH_BEFORE_SLEEP_MINUTES 5
+#define REFRESH_BUTTON_MINUTES 30
 
 // ---- Burn-in protection ----------------------------------------------------
 
@@ -64,5 +85,5 @@
 
 // Error-diffusion dithering on the cover (RGB332 bands without it).
 #define COVER_DITHER 1
-// Sharpen the cover after scaling it down.
-#define COVER_SHARPEN 1
+// Sharpen the cover after scaling it down (off: composite turns sharpened edges into fringes).
+#define COVER_SHARPEN 0

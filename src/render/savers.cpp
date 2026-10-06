@@ -21,6 +21,16 @@ float cycle(uint32_t ms, double perSec, double period) {
 
 uint8_t dim(RGB c, int a) { return toRGB332(lerp(BLACK, c, a)); }
 
+// Sine to about 0.1%, for per-particle work: newlib's sinf is slow on the ESP32, very slow
+// once the angle is large.
+inline float fastSin(float x) {
+    int k = (int)(x * 0.15915494f + (x >= 0 ? 0.5f : -0.5f));
+    x -= k * 6.2831853f;  // now within [-pi, pi]
+    float y = 1.27323954f * x - 0.40528473f * x * fabsf(x);
+    return 0.225f * (y * fabsf(y) - y) + y;
+}
+inline float fastCos(float x) { return fastSin(x + 1.5707963f); }
+
 void textCentered(Canvas& c, const Font& font, const char* s, float cx, int baseline, RGB color,
                   int opacity = 256) {
     TextStyle st;
@@ -443,18 +453,18 @@ void drawScope(Canvas& c, const SaverFrame& f) {
 
     // The figure: x = sin(a s + phase), y = sin(b s), with the ratio drifting.
     const float A = 3.0f, B = 2.0f + 0.5f * sinf(t * 0.045f) + 0.25f * sinf(t * 0.017f);
-    const float phase = t * 0.35f;
+    const float phase = cycle(f.ms, 0.35, 2 * PI_F);
     const float cx = (gx0 + gx1) * 0.5f, cy = (gy0 + gy1) * 0.5f, rx = (gx1 - gx0) * 0.42f, ry = (gy1 - gy0) * 0.42f;
     const int SAMPLES = 520;
     for (int i = 0; i < SAMPLES; i++) {  // the whole trace, faint
         float s = i * (2 * PI_F / SAMPLES);
-        int sx = (int)(cx + rx * sinf(A * s + phase)), sy = (int)(cy - ry * sinf(B * s));
+        int sx = (int)(cx + rx * fastSin(A * s + phase)), sy = (int)(cy - ry * fastSin(B * s));
         dot(c, sx, sy, ramp, 4.0f * calm(f, sx, sy));
     }
     const float head = cycle(f.ms, 1.4, 2 * PI_F);
     for (int i = 0; i < 160; i++) {  // the beam and its afterglow
         float s = head - i * 0.006f;
-        int sx = (int)(cx + rx * sinf(A * s + phase)), sy = (int)(cy - ry * sinf(B * s));
+        int sx = (int)(cx + rx * fastSin(A * s + phase)), sy = (int)(cy - ry * fastSin(B * s));
         dot(c, sx, sy, ramp, (15.0f - i * 0.075f) * calm(f, sx, sy), i < 8);
     }
     textAt(c, sora_micro, "CH1 2V/DIV", gx0, gy1 + 11, RGB{120, 255, 150}, 130);
@@ -743,7 +753,7 @@ void drawRedSky(Canvas& c, const SaverFrame& f) {
     if (ft < 6000) {
         float u = ft / 6000.0f;
         float bx = -10 + u * (Canvas::W + 20), by = 40 + 30 * hash01(flight) + 8 * sinf(u * 9);
-        float flap = sinf(f.ms * 0.02f) * 3;
+        float flap = sinf(cycle(f.ms, 20.0, 2 * PI_F)) * 3;
         lineAA(c, bx - 5, by - flap, bx, by, RGB{0, 0, 0});
         lineAA(c, bx, by, bx + 5, by - flap, RGB{0, 0, 0});
     }
@@ -1174,6 +1184,279 @@ void drawHaze(Canvas& c, const SaverFrame& f) {
     fillRect(c, mx - 1, ry - 6, 3, 5, toRGB332(ink));
 }
 
+
+// ---------------------------------------------------------------------------
+// Shared by the scenes below. They keep to exact colours and neutral lines, which composite
+// shows cleanly, rather than dithered fills.
+
+// One-pixel line in a solid colour: far cheaper than lineAA, and crisp on composite.
+void line1(Canvas& c, int x0, int y0, int x1, int y1, uint8_t col) {
+    const int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1, dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    for (int err = dx + dy;;) {
+        if ((unsigned)x0 < (unsigned)Canvas::W && (unsigned)y0 < (unsigned)Canvas::H) c.rows[y0][x0] = col;
+        if (x0 == x1 && y0 == y1) break;
+        const int e2 = 2 * err;
+        if (e2 >= dy) err += dy, x0 += sx;
+        if (e2 <= dx) err += dx, y0 += sy;
+    }
+}
+
+// Per channel maximum of two RGB332 colours: light adding up without leaving the palette.
+inline uint8_t max332(uint8_t a, uint8_t b) {
+    int r = (a & 0xE0) > (b & 0xE0) ? (a & 0xE0) : (b & 0xE0);
+    int g = (a & 0x1C) > (b & 0x1C) ? (a & 0x1C) : (b & 0x1C);
+    int bl = (a & 0x03) > (b & 0x03) ? (a & 0x03) : (b & 0x03);
+    return (uint8_t)(r | g | bl);
+}
+
+// ---------------------------------------------------------------------------
+// Rain: a bus window at night. City lights blur behind the glass; drops run down it.
+
+void drawRain(Canvas& c, const SaverFrame& f) {
+    static const RGB LIGHTS[6] = {{255, 214, 160}, {255, 178, 80}, {255, 150, 50},
+                                  {200, 214, 255}, {255, 90, 70},   {150, 240, 170}};
+    const float t = cycle(f.ms, 1.0, 100000.0), pulse = cycle(f.ms, 0.35, 2 * PI_F);
+
+    // A few distant points of light high up: windows, a radio mast.
+    for (int i = 0; i < 10; i++) {
+        const int x = (int)fmodf(hash01(i * 3 + 40) * 300 + t * 1.2f, 300.0f) - 20, y = 20 + (int)(hash01(i * 3 + 41) * 70) + f.oy;
+        if (x >= 0 && x < Canvas::W - 1 && calm(f, x, y) > 0.8f) c.rows[y][x] = c.rows[y][x + 1] = 0x92;
+    }
+    // Out-of-focus street lights sliding past (nearer, bigger ones faster): flat discs whose
+    // outer edge is dimmer, so they read soft without dithering.
+    for (int i = 0; i < 13; i++) {
+        const float r = 9 + hash01(i * 5 + 1) * 17, rx = r / DISPLAY_PIXEL_ASPECT;
+        const float span = Canvas::W + 2 * rx + 40;
+        const float cx = fmodf(hash01(i * 5 + 3) * span + t * (2.0f + r * 0.3f), span) - rx - 20;
+        const float cy = 128 + hash01(i * 5 + 4) * 82 + f.oy;
+        const RGB col = LIGHTS[(int)(hash01(i * 5 + 5) * 5.99f)];
+        float glow = (0.45f + 0.3f * hash01(i * 7 + 9)) * (0.9f + 0.1f * fastSin(pulse + i * 1.7f));
+        glow *= 0.3f + 0.7f * calm(f, (int)cx, (int)cy);
+        const uint8_t core = toRGB332Clean(lerp(BLACK, col, (int)(glow * 256)));
+        const uint8_t edge = toRGB332Clean(lerp(BLACK, col, (int)(glow * 0.55f * 256)));
+        const int y0 = (int)ceilf(cy - r), y1 = (int)floorf(cy + r);
+        for (int y = y0 < 0 ? 0 : y0; y <= y1 && y < Canvas::H; y++) {
+            const float dy = (y - cy) / r;
+            const float hw = rx * sqrtf(fmaxf(0.0f, 1 - dy * dy)), hwIn = hw - rx * 0.16f;
+            const float hwCore = fabsf(dy) < 0.86f ? hwIn : -1;
+            const int xa = (int)ceilf(cx - hw), xb = (int)floorf(cx + hw);
+            uint8_t* row = c.rows[y];
+            for (int x = xa < 0 ? 0 : xa; x <= xb && x < Canvas::W; x++)
+                row[x] = max332(row[x], fabsf(x - cx) <= hwCore ? core : edge);
+        }
+    }
+
+    // Beads of water on the glass, a few changing at a time.
+    for (int i = 0; i < 64; i++) {
+        const uint32_t period = 40000;
+        const uint32_t slot = (f.ms + (uint32_t)(hash01(i * 3 + 11) * period)) / period;
+        const uint32_t h = i * 2654435761u + slot * 40503u;
+        const int x = (int)(hash01(h) * (Canvas::W - 2)), y = (int)(hash01(h + 1) * (Canvas::H - 1));
+        if (calm(f, x, y) < 0.6f) continue;
+        c.rows[y][x] = max332(c.rows[y][x], 0x49);
+        c.rows[y][x + 1] = max332(c.rows[y][x + 1], 0x49);
+    }
+
+    // Drops that let go and run down, stopping and starting, leaving a wet trail.
+    for (int d = 0; d < 9; d++) {
+        const uint32_t period = 9000 + (uint32_t)(hash01(d * 3 + 1) * 8000);
+        const uint32_t life = f.ms + (uint32_t)(hash01(d * 3 + 2) * period);
+        const float a = (life % period) * 0.001f;  // seconds since it let go
+        const uint32_t s = d * 7919u + (life / period) * 104729u;
+        const float x0 = 10 + hash01(s) * (Canvas::W - 20), y0 = hash01(s + 1) * 100;
+        const float speed = 20 + hash01(s + 2) * 24;
+        const float head = y0 + speed * (a + 0.28f * sinf(a * 3.0f));  // never runs backwards
+        auto xAt = [&](float y) { return x0 + 5.0f * (valueNoise(s + 3, y * 0.05f) - 0.5f); };
+        for (int y = (int)y0; y < (int)head && y < Canvas::H; y++) {
+            const float back = head - y;
+            if (y < 0 || back > 90 || (back > 40 && (y & 1))) continue;
+            const int x = (int)(xAt((float)y) + 0.5f);
+            if (x < 0 || x >= Canvas::W || calm(f, x, y) < 0.3f) continue;
+            c.rows[y][x] = max332(c.rows[y][x], back < 14 ? 0x92 : 0x49);
+        }
+        const int hx = (int)(xAt(head) + 0.5f), hy = (int)head;
+        if (hx < 0 || hx >= Canvas::W - 1 || hy < 0 || hy >= Canvas::H - 1 || calm(f, hx, hy) < 0.3f) continue;
+        c.rows[hy][hx] = 0xFF;
+        c.rows[hy][hx + 1] = c.rows[hy + 1][hx] = c.rows[hy + 1][hx + 1] = 0xB6;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contours: a survey map of a landscape that slowly reshapes itself.
+
+// Landscape height, 0..1: two octaves of value noise, each changing over time. The lattice
+// values are worked out once per frame, so a point costs two bilinear lookups.
+struct Terrain {
+    static constexpr int W1 = 7, H1 = 6, W2 = 14, H2 = 11;
+    static constexpr float F1 = 0.014f * DISPLAY_PIXEL_ASPECT, G1 = 0.014f;
+    static constexpr float F2 = 0.034f * DISPLAY_PIXEL_ASPECT, G2 = 0.034f;
+    uint16_t a[H1 * W1], b[H2 * W2];
+
+    explicit Terrain(float t) {
+        fill(a, W1, H1, 31, t);
+        fill(b, W2, H2, 37, t * 1.6f);
+    }
+    static void fill(uint16_t* out, int w, int h, uint32_t seed, float t) {
+        const float ft = floorf(t);
+        float u = t - ft;
+        u = u * u * (3 - 2 * u);
+        const uint32_t it = (uint32_t)(int32_t)ft;
+        const uint32_t s0 = (seed + it * 7919u) * 0x9E3779B1u, s1 = (seed + (it + 1) * 7919u) * 0x9E3779B1u;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                const uint32_t k = ((uint32_t)x * 0x85EBCA77u) ^ ((uint32_t)y * 0xC2B2AE3Du);
+                const float v0 = hash01(s0 ^ k), v1 = hash01(s1 ^ k);
+                out[y * w + x] = (uint16_t)((v0 + (v1 - v0) * u) * 65535);
+            }
+    }
+    static float sample(const uint16_t* l, int w, float x, float y) {
+        const int ix = (int)x, iy = (int)y;
+        float u = x - ix, v = y - iy;
+        u = u * u * (3 - 2 * u);
+        v = v * v * (3 - 2 * v);
+        const uint16_t* r0 = l + iy * w + ix;
+        const uint16_t* r1 = r0 + w;
+        const float top = r0[0] + (r0[1] - r0[0]) * u, bottom = r1[0] + (r1[1] - r1[0]) * u;
+        return (top + (bottom - top) * v) * (1.0f / 65535);
+    }
+    float at(float x, float y) const {
+        return 0.78f * sample(a, W1, x * F1, y * G1) + 0.22f * sample(b, W2, x * F2, y * G2);
+    }
+};
+
+void drawContours(Canvas& c, const SaverFrame& f) {
+    constexpr int CELL = 8, NX = Canvas::W / CELL + 1, NY = Canvas::H / CELL + 1;
+    constexpr float INTERVAL = 0.06f;
+    const float t = cycle(f.ms, 1.0 / 45, 100000.0);  // a new landscape every 45 s or so
+    const RGB major = {236, 236, 236};
+
+    const Terrain land(t);
+    float prev[NX], cur[NX];
+    for (int j = 0; j < NY; j++) {
+        for (int i = 0; i < NX; i++) cur[i] = land.at((float)(i * CELL), (float)(j * CELL));
+        for (int i = 0; j > 0 && i + 1 < NX; i++) {
+            const float x0 = (float)(i * CELL), y0 = (float)((j - 1) * CELL), x1 = x0 + CELL, y1 = y0 + CELL;
+            const float h00 = prev[i], h10 = prev[i + 1], h01 = cur[i], h11 = cur[i + 1];
+            const float lo = fminf(fminf(h00, h10), fminf(h01, h11)), hi = fmaxf(fmaxf(h00, h10), fmaxf(h01, h11));
+            const int k0 = (int)ceilf(lo / INTERVAL), k1 = (int)floorf(hi / INTERVAL);
+            if (k0 > k1) continue;
+            const float quiet = calm(f, (int)(x0 + CELL / 2), (int)(y0 + CELL / 2));
+            if (quiet < 0.02f) continue;
+            for (int k = k0; k <= k1; k++) {
+                // Marching squares: where this level crosses the cell's four edges.
+                const float lv = k * INTERVAL;
+                float px[4], py[4];
+                int n = 0;
+                auto edge = [&](float ha, float hb, float ax, float ay, float bx, float by) {
+                    if ((ha < lv) == (hb < lv)) return;
+                    const float s = (lv - ha) / (hb - ha);
+                    px[n] = ax + (bx - ax) * s, py[n] = ay + (by - ay) * s, n++;
+                };
+                edge(h00, h10, x0, y0, x1, y0);
+                edge(h10, h11, x1, y0, x1, y1);
+                edge(h11, h01, x1, y1, x0, y1);
+                edge(h01, h00, x0, y1, x0, y0);
+                for (int m = 0; m + 1 < n; m += 2) {
+                    if (k % 5 == 0)  // index contours: bright and smooth
+                        lineAA(c, px[m], py[m], px[m + 1], py[m + 1], major, (int)(256 * quiet));
+                    else if (quiet > 0.25f)  // the rest: plain grey pixels
+                        line1(c, (int)(px[m] + 0.5f), (int)(py[m] + 0.5f), (int)(px[m + 1] + 0.5f),
+                              (int)(py[m + 1] + 0.5f), quiet > 0.6f ? 0x92 : 0x49);
+                }
+            }
+        }
+        memcpy(prev, cur, sizeof(cur));
+    }
+
+    // Spot heights, resurveyed now and then.
+    const uint32_t slot = f.ms / 40000;
+    for (int s = 0; s < 4; s++) {
+        const int x = 20 + (int)(hash01(slot * 13 + s * 3 + 1) * (Canvas::W - 70));
+        const int y = 24 + (int)(hash01(slot * 13 + s * 3 + 2) * (Canvas::H - 70));
+        if (calm(f, x, y) < 1.0f) continue;
+        char label[8], *d = label + sizeof(label) - 1;  // the height, without snprintf's stack
+        *d = 0;
+        for (int v = (int)(land.at((float)x, (float)y) * 2400); d == label + sizeof(label) - 1 || v; v /= 10)
+            *--d = (char)('0' + v % 10);
+        const int w = textWidth16(sora_micro, d) / 16;
+        fillRect(c, x - 3, y - 3, w + 11, 8, 0);
+        hline(c, x - 2, x + 2, y, 0xFF);
+        vline(c, x, y - 2, y + 2, 0xFF);
+        textAt(c, sora_micro, d, (float)(x + 5), y + 3, RGB{200, 200, 200});
+    }
+
+    // Fine print and a scale bar in a footer strip.
+    const int by = Canvas::H - 9 + f.oy, bx = 14 + f.ox;
+    fillRect(c, 0, by - 12, Canvas::W, Canvas::H - (by - 12), 0);
+    hline(c, 8, Canvas::W - 9, by - 13, 0x49);
+    textAt(c, sora_micro, "CONTOUR INTERVAL 100 M", (float)bx, by, RGB{150, 150, 150});
+    for (int k = 0; k <= 4; k++) vline(c, Canvas::W - 74 + f.ox + k * 15, by - 6, by - (k % 2 ? 4 : 3), 0x92);
+    hline(c, Canvas::W - 74 + f.ox, Canvas::W - 14 + f.ox, by - 3, 0x92);
+    textRight(c, sora_micro, "2 KM", (float)(Canvas::W - 14 + f.ox), by + 7, RGB{150, 150, 150});
+}
+
+// ---------------------------------------------------------------------------
+// Currents: a wind map. Fine streaks ride a slowly turning flow.
+
+struct FlowWave {
+    float kx, ky, w, a, ph;
+};
+const FlowWave FLOW[4] = {
+    {0.021f, 0.012f, 0.050f, 1.00f, 0.0f},
+    {-0.010f, 0.026f, -0.037f, 0.85f, 1.7f},
+    {0.031f, -0.019f, 0.029f, 0.60f, 4.1f},
+    {-0.024f, -0.033f, -0.061f, 0.45f, 2.6f},
+};
+
+// A steady breeze plus eddies: the curl of a sum of waves, so it neither gathers nor thins.
+inline void flowAt(float x, float y, float t, float& vx, float& vy) {
+    vx = 0.55f, vy = 0.0f;
+    for (const FlowWave& w : FLOW) {
+        const float k = fastCos(w.kx * x + w.ky * y + w.w * t + w.ph) * w.a * 40.0f;
+        vx += k * w.ky;
+        vy -= k * w.kx;
+    }
+}
+
+void drawCurrents(Canvas& c, const SaverFrame& f) {
+    constexpr int N = 110, STEPS = 34;
+    constexpr float STEP = 3.2f, TAIL = 12.0f;
+    constexpr uint32_t LIFE = 7000;
+    const float t = cycle(f.ms, 1.0, 100000.0);
+    const float worldW = Canvas::W * DISPLAY_PIXEL_ASPECT;
+    for (int p = 0; p < N; p++) {
+        const uint32_t life = f.ms + (uint32_t)(hash01(p * 2 + 1) * LIFE);
+        const float age = (life % LIFE) / (float)LIFE;
+        const uint32_t s = p * 7919u + (life / LIFE) * 104729u;
+        float x = hash01(s) * (worldW + 60) - 60, y = hash01(s + 1) * Canvas::H;
+        const float headAt = age * STEPS;
+        const int last = (int)headAt + 1;
+        const float env = age < 0.15f ? age / 0.15f : (age > 0.8f ? (1 - age) / 0.2f : 1.0f);
+        float px = x / DISPLAY_PIXEL_ASPECT, py = y;
+        for (int k = 1; k <= last && k <= STEPS; k++) {
+            float vx, vy;
+            flowAt(x, y, t, vx, vy);
+            const float inv = STEP / sqrtf(vx * vx + vy * vy + 1e-4f);
+            x += vx * inv, y += vy * inv;
+            float nx = x / DISPLAY_PIXEL_ASPECT, ny = y;
+            const float back = headAt - k;  // segments behind the head
+            if (back < 0) {  // the head, part way along this step
+                const float u = 1 + back;
+                nx = px + (nx - px) * u, ny = py + (ny - py) * u;
+            }
+            if (back < TAIL) {
+                const float b = env * (1 - (back < 0 ? 0 : back) / TAIL) * calm(f, (int)nx, (int)ny);
+                if (back < 2 && b > 0.03f)  // the head: smooth
+                    lineAA(c, px, py, nx, ny, RGB{255, 255, 255}, (int)(b * 256));
+                else if (b > 0.12f)  // the tail: plain greys, dimming
+                    line1(c, (int)(px + 0.5f), (int)(py + 0.5f), (int)(nx + 0.5f), (int)(ny + 0.5f),
+                          b > 0.6f ? 0xB6 : (b > 0.33f ? 0x92 : 0x49));
+            }
+            px = nx, py = ny;
+        }
+    }
+}
+
 }  // namespace
 
 SaverStyle saverStyle(int id) {
@@ -1190,6 +1473,8 @@ SaverStyle saverStyle(int id) {
         case SAVER_ID_VFD: return {70, RGB{110, 255, 222}, true};
         case SAVER_ID_WIRED: return {104, RGB{232, 234, 242}, false};
         case SAVER_ID_HAZE: return {116, RGB{38, 42, 98}, false};
+        case SAVER_ID_RAIN: return {74, RGB{255, 240, 226}, false};
+        case SAVER_ID_CONTOURS: return {Canvas::H / 2, RGB{240, 240, 240}, false};
         default: return {Canvas::H / 2, RGB{255, 255, 255}, false};  // waves, sphere
     }
 }
@@ -1211,7 +1496,27 @@ void drawSaver(int id, Canvas& c, const SaverFrame& f) {
         case SAVER_ID_VFD: drawVfd(c, f); break;
         case SAVER_ID_WIRED: drawWired(c, f); break;
         case SAVER_ID_HAZE: drawHaze(c, f); break;
+        case SAVER_ID_RAIN: drawRain(c, f); break;
+        case SAVER_ID_CONTOURS: drawContours(c, f); break;
+        case SAVER_ID_CURRENTS: drawCurrents(c, f); break;
         default: drawWaves(c, f); break;
+    }
+}
+
+void drawSnow(Canvas& c, uint32_t ms) {
+    // Black to white, so every pixel of the LCD keeps swinging.
+    static const uint8_t SNOW[8] = {0x00, 0x00, 0x00, 0x49, 0x92, 0xB6, 0xFF, 0xFF};
+    uint32_t seed = (ms / 33) * 2654435761u + 977u;
+    for (int y = 0; y < Canvas::H; y++) {
+        uint8_t* row = c.rows[y];
+        for (int x = 0; x < Canvas::W; x += 4) {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            uint32_t word = SNOW[seed & 7] | (SNOW[(seed >> 3) & 7] << 8) | (SNOW[(seed >> 6) & 7] << 16) |
+                            ((uint32_t)SNOW[(seed >> 9) & 7] << 24);
+            memcpy(row + x, &word, 4);
+        }
     }
 }
 

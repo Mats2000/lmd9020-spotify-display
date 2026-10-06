@@ -59,24 +59,28 @@ void loadTrack(const Track& t) {
         vTaskDelay(pdMS_TO_TICKS(10));
         waited += 10;
     }
+    vTaskDelay(pdMS_TO_TICKS(100));  // the video output lets go of the cover's palette at the next frame
 
     Serial.printf("Now: %s / %s (heap %u, largest %u, net stack left %u)\n", t.title.c_str(),
                   t.artist.c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                   uxTaskGetStackHighWaterMark(nullptr));
     ScenePalette pal;
-    bool ok = fetchCover(t.imageUrl, t.imageWidth, art, pal);
+    int colours = 0;
+    bool ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
     if (!ok) {  // one more try: a dropped download is usually a one-off
         vTaskDelay(pdMS_TO_TICKS(500));
-        ok = fetchCover(t.imageUrl, t.imageWidth, art, pal);
+        ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
     }
     if (!ok) {
         pal = defaultPalette();
         fillPlaceholderArt(art, pal);
+        colours = 0;
     }
 
     Serial.printf("  net stack left after the cover: %u\n", uxTaskGetStackHighWaterMark(nullptr));
     xSemaphoreTake(lock, portMAX_DELAY);
     shared.art = art;
+    shared.artColours = colours;
     shared.pal = pal;
     xSemaphoreGive(lock);
 }
@@ -181,10 +185,10 @@ void netTask(void*) {
 void netStart(const Scene* s) {
     scene = s;
     lock = xSemaphoreCreateMutex();
-    art = (uint32_t*)heap_caps_malloc(ART_WORDS * 4, MALLOC_CAP_EXEC);  // IRAM, see art.h
+    art = (uint32_t*)heap_caps_malloc(ART_ALLOC_WORDS * 4, MALLOC_CAP_EXEC);  // IRAM, see art.h
     if (!art) {
         Serial.println("Cover buffer didn't fit in IRAM; using ordinary RAM");
-        art = (uint32_t*)malloc(ART_WORDS * 4);
+        art = (uint32_t*)malloc(ART_ALLOC_WORDS * 4);
     }
     if (!art) {
         Serial.println("Out of memory for the cover art buffer");

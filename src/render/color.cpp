@@ -28,19 +28,31 @@ float luminance(RGB c) {
     return 0.2126f * linear(c.r) + 0.7152f * linear(c.g) + 0.0722f * linear(c.b);
 }
 
-uint8_t nearestRGB332(RGB c) {
+// Distance as composite shows it: brightness error, plus colour error weighted by chromaWeight.
+static long compositeDistance(RGB a, RGB b, int chromaWeight) {
+    long dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+    long dy = (77 * dr + 150 * dg + 29 * db) >> 8;
+    long du = (126 * (db - dy)) >> 8, dv = (224 * (dr - dy)) >> 8;
+    return dy * dy + chromaWeight * (du * du + dv * dv);
+}
+
+static uint8_t nearest(RGB c, int chromaWeight) {
     uint8_t best = 0;
     long bestD = 0x7fffffff;
     for (int i = 0; i < 256; i++) {
-        RGB p = fromRGB332((uint8_t)i);
-        long rmean = (c.r + p.r) / 2;
-        long dr = c.r - p.r, dg = c.g - p.g, db = c.b - p.b;
-        // "Redmean" weighting: cheap and close enough to perceptual.
-        long d = ((512 + rmean) * dr * dr >> 8) + 4 * dg * dg + ((767 - rmean) * db * db >> 8);
+        long d = compositeDistance(c, fromRGB332((uint8_t)i), chromaWeight);
         if (d < bestD) bestD = d, best = (uint8_t)i;
     }
     return best;
 }
+
+uint8_t nearestRGB332(RGB c) { return nearest(c, 3); }
+
+// RGB332 has no true greys between black and white; these are the least tinted ones.
+GreyTable::GreyTable() {
+    for (int v = 0; v < 256; v++) entry[v] = nearest(RGB{(uint8_t)v, (uint8_t)v, (uint8_t)v}, 6);
+}
+GreyTable GREY332;
 
 void ArtStats::reset() { memset(this, 0, sizeof(*this)); }
 

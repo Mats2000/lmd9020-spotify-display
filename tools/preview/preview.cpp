@@ -8,7 +8,7 @@
 #include "render/scene.h"
 
 static uint8_t framebuffer[Canvas::H][Canvas::W];
-static uint32_t art[ART_WORDS];
+static uint32_t art[ART_ALLOC_WORDS];
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -41,9 +41,23 @@ int main(int argc, char** argv) {
         }
         fclose(f);
 
+        // The cover's own colours, from a 64 px thumbnail (<raw>.thumb) as Spotify serves one.
+        int colours = 0;
+        char thumbPath[512];
+        snprintf(thumbPath, sizeof(thumbPath), "%s.thumb", argv[3]);
+        if (FILE* t = fopen(thumbPath, "rb")) {
+            static uint8_t thumb[64 * 64 * 3];
+            if (fread(thumb, 3, 64 * 64, t) == 64 * 64) {
+                for (int i = 0; i < 64 * 64; i++)
+                    art[i] = (uint32_t)thumb[i * 3] << 16 | thumb[i * 3 + 1] << 8 | thumb[i * 3 + 2];
+                colours = buildArtPalette(art, 64 * 64);
+            }
+            fclose(t);
+        }
+
         // Feed it through in 16x16 blocks, the way the JPEG decoder does.
         ArtBuilder builder;
-        builder.begin(art, w, h);
+        builder.begin(art, w, h, colours);
         static uint8_t block[16 * 16 * 3];
         for (int by = 0; by < h; by += 16) {
             for (int bx = 0; bx < w; bx += 16) {
@@ -57,6 +71,7 @@ int main(int argc, char** argv) {
         builder.finish();
         np.pal = pickPalette(builder.stats());
         np.art = art;
+        np.artColours = colours;
         np.version = 1;
         np.playing = true;
         snprintf(np.title, sizeof(np.title), "%s", argv[6]);
@@ -76,9 +91,15 @@ int main(int argc, char** argv) {
 
     FILE* out = fopen(argv[1], "wb");
     fprintf(out, "P6\n%d %d\n255\n", Canvas::W, Canvas::H);
+    const CoverRegion& region = scene.coverRegion();
     for (int y = 0; y < Canvas::H; y++)
         for (int x = 0; x < Canvas::W; x++) {
             RGB p = fromRGB332(framebuffer[y][x]);
+            if (region.on && x >= region.x0 && x < region.x1 && y >= region.y0 && y < region.y1) {
+                uint32_t c = artPalette(region.art)[framebuffer[y][x]];
+                p = RGB{(uint8_t)(((c >> 16) & 255) * region.level >> 8), (uint8_t)(((c >> 8) & 255) * region.level >> 8),
+                        (uint8_t)((c & 255) * region.level >> 8)};
+            }
             fputc(p.r, out), fputc(p.g, out), fputc(p.b, out);
         }
     fclose(out);

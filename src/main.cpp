@@ -19,9 +19,13 @@ static NowPlaying np;  // static to keep ~400 bytes off the loop task's stack
 
 static const dac_channel_t VIDEO_DAC = VIDEO_GPIO == 26 ? DAC_CHANNEL_2 : DAC_CHANNEL_1;
 
-static uint32_t lastActiveMs;  // last time Spotify was playing (or boot)
+static uint32_t lastActiveMs;  // last time Spotify was playing (or boot, or the button)
 static uint32_t lastSwapField = 0;
 static bool signalOff = false;
+static bool buttonSnow = false;
+static uint32_t buttonSnowUntil = 0;
+
+static const int BOOT_BUTTON = 0;
 
 void setup() {
     Serial.begin(115200);
@@ -29,6 +33,9 @@ void setup() {
                   ESP.getFreeHeap());
 
     // Must run on the loop() task: the library notifies the task that called begin().
+    ESP_8_BIT_composite::setColor(NTSC_SATURATION, NTSC_HUE);
+    ESP_8_BIT_composite::setStandardLine(NTSC_STANDARD_LINE);
+    ESP_8_BIT_composite::setInterlace(NTSC_INTERLACE);
     video.begin();
     // The library starts on GPIO25; its I2S DAC is mono, so GPIO26 can carry it instead.
 #if VIDEO_GPIO == 26
@@ -38,15 +45,59 @@ void setup() {
     Serial.printf("Video running. Free heap %u, largest block %u\n", ESP.getFreeHeap(),
                   ESP.getMaxAllocHeap());
 
+    pinMode(BOOT_BUTTON, INPUT_PULLUP);
     netStart(&scene);
     lastActiveMs = millis();
+}
+
+// The BOOT button starts (or stops) a panel refresh, and wakes the display.
+static void pollButton() {
+    static bool wasDown = false;
+    static uint32_t changedMs = 0;
+    bool down = digitalRead(BOOT_BUTTON) == LOW;
+    if (down != wasDown && millis() - changedMs > 50) {
+        wasDown = down;
+        changedMs = millis();
+        if (down) {
+            buttonSnow = !buttonSnow;
+            buttonSnowUntil = millis() + REFRESH_BUTTON_MINUTES * 60000UL;
+            lastActiveMs = millis();
+            Serial.println(buttonSnow ? "Button: panel refresh on" : "Button: panel refresh off");
+        }
+    }
+    if (buttonSnow && (int32_t)(millis() - buttonSnowUntil) >= 0) buttonSnow = false;
+}
+
+// The cover's own colours, encoded at the scene's brightness, for its rectangle on screen.
+static void showCoverPalette(const CoverRegion& r) {
+    static uint32_t version = 0;
+    static int level = -1;
+    if (!r.on) {
+        ESP_8_BIT_composite::setRegion(0, 0, 0, 0, nullptr);
+        level = -1;
+        return;
+    }
+    uint32_t* art = const_cast<uint32_t*>(r.art);
+    uint32_t* encoded = artEncoded(art);
+    if (r.version != version || r.level != level) {  // a new cover, or fading
+        const uint32_t* rgb = artPalette(art);
+        for (int i = 0; i < r.colours; i++) {
+            uint32_t c = rgb[i];
+            encoded[i] = ESP_8_BIT_composite::encodeColor(c >> 16, (c >> 8) & 255, c & 255, r.level);
+        }
+        version = r.version, level = r.level;
+    }
+    ESP_8_BIT_composite::setRegion(r.x0, r.y0, r.x1, r.y1, encoded);
 }
 
 // Sleep: after SLEEP_AFTER_MINUTES with nothing playing, fade out and power down
 // the DAC so the monitor sees no input. Returns true while the signal is off.
 static bool handleSleep() {
     if (np.playing) lastActiveMs = millis();
-    bool sleepy = SLEEP_AFTER_MINUTES > 0 && millis() - lastActiveMs >= SLEEP_AFTER_MINUTES * 60000UL;
+    const uint32_t sleepMs = SLEEP_AFTER_MINUTES * 60000UL, idleMs = millis() - lastActiveMs;
+    bool sleepy = SLEEP_AFTER_MINUTES > 0 && idleMs >= sleepMs;
+    bool lastMinutes = SLEEP_AFTER_MINUTES > 0 && idleMs + REFRESH_BEFORE_SLEEP_MINUTES * 60000UL >= sleepMs;
+    scene.holdSnow(buttonSnow || lastMinutes);
     scene.setAwake(!sleepy);
 
     if (sleepy && scene.dark() && !signalOff) {
@@ -63,6 +114,7 @@ static bool handleSleep() {
 
 void loop() {
     netSnapshot(np);
+    pollButton();
     if (handleSleep()) {
         delay(100);  // nothing to draw; just keep an eye on Spotify
         return;
@@ -84,6 +136,7 @@ void loop() {
     Canvas canvas{video.getFrameBufferLines()};
     uint32_t start = micros();
     scene.render(canvas, np, clock, millis());
+    showCoverPalette(scene.coverRegion());
 
     // Over two fields (33 ms) drops a frame.
     static uint32_t slowest = 0, total = 0, frames = 0, overBudget = 0, lastReport = 0;

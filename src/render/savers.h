@@ -22,6 +22,9 @@ enum SaverId {
     SAVER_ID_REDSKY,    // rooftops and crows on the wires against a blood-red dusk
     SAVER_ID_PSYCHE,    // the clock as a chip label, circuit traces pulsing outward
     SAVER_ID_CROSSING,  // a night street crossing, the walk signal cycling
+    SAVER_ID_RAIN,         // a bus window at night: blurred city lights, drops running down
+    SAVER_ID_CONTOURS,     // a survey map of a landscape that slowly reshapes itself
+    SAVER_ID_CURRENTS,     // a wind map: fine streaks riding a turning flow
     SAVER_ID_COUNT,
 };
 
@@ -42,5 +45,7 @@ struct SaverStyle {
 
 SaverStyle saverStyle(int id);
 void drawSaver(int id, Canvas& c, const SaverFrame& f);
+// Full-screen TV snow, for clearing image retention on the LCD.
+void drawSnow(Canvas& c, uint32_t ms);
 // Runs after the clock is drawn, for effects that cover it too (glitches).
 void drawSaverOverlay(int id, Canvas& c, const SaverFrame& f);

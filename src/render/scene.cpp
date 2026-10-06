@@ -14,6 +14,7 @@ namespace {
 constexpr int SLEEP_FADE_MS = 3000;
 constexpr uint32_t IDLE_KEY = 0x80000000u;
 constexpr uint32_t LOADING_KEY = 0x40000000u;  // playing, cover still downloading: black
+constexpr uint32_t SNOW_KEY = 0x20000000u;     // full-screen TV snow, to clear the LCD
 
 // ---- Now playing ----
 constexpr int LABEL_BASE = 17;                 // the label's baseline
@@ -37,6 +38,9 @@ const int SAVERS[] = {
 #if SAVER_WAVES
     SAVER_ID_WAVES,
 #endif
+#if SAVER_RAIN
+    SAVER_ID_RAIN,
+#endif
 #if SAVER_STATIC
     SAVER_ID_STATIC,
 #endif
@@ -55,11 +59,17 @@ const int SAVERS[] = {
 #if SAVER_RIDGES
     SAVER_ID_RIDGES,
 #endif
+#if SAVER_CONTOURS
+    SAVER_ID_CONTOURS,
+#endif
 #if SAVER_WIRED
     SAVER_ID_WIRED,
 #endif
 #if SAVER_TUNNEL
     SAVER_ID_TUNNEL,
+#endif
+#if SAVER_CURRENTS
+    SAVER_ID_CURRENTS,
 #endif
 #if SAVER_REDSKY
     SAVER_ID_REDSKY,
@@ -102,8 +112,9 @@ Drift drift(uint32_t ms, int rx, int ry, uint32_t periodX, uint32_t periodY) {
 #endif
 }
 
-// Paths take most of an hour: a one-pixel step every few minutes.
-Drift cardDrift(uint32_t ms) { return drift(ms, 4, 3, 41 * 60000u, 59 * 60000u); }
+// Up to 10 px sideways (at most a pixel every half minute), barely vertically: the song line
+// sits near the bottom.
+Drift cardDrift(uint32_t ms) { return drift(ms, 10, 3, 38 * 60000u, 59 * 60000u); }
 // The clock: the brightest, most static thing on screen, so it roams furthest.
 Drift clockDrift(uint32_t ms) { return drift(ms, 10, 6, 37 * 60000u, 53 * 60000u); }
 
@@ -112,6 +123,8 @@ struct Fade {
     int outMs, inMs;
 };
 Fade fadeFor(uint32_t from, uint32_t to) {
+    if (to == SNOW_KEY) return {500, 300};    // like changing channel
+    if (from == SNOW_KEY) return {600, 1600};
     bool fromIdle = from & IDLE_KEY, toIdle = to & IDLE_KEY;
     if (fromIdle && toIdle) return {1500, 2500};               // one screensaver to the next
     if (fromIdle != toIdle || from == 0) return {1000, 1600};  // music to clock and back
@@ -139,12 +152,17 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
     if (np.playing) {
         if (idle_) rotation_ += (ms - idleSince_) / SAVER_MS + 1;  // next time, start on the next one
         idle_ = false;
+        heardMusic_ = true;
         want = np.art ? np.version : LOADING_KEY;
     } else {
-        if (!idle_) idleSince_ = ms;
+        if (!idle_) {
+            idleSince_ = ms;
+            if (heardMusic_) snowUntil_ = ms + REFRESH_AFTER_MUSIC_SECONDS * 1000u;
+        }
         idle_ = true;
-        want = IDLE_KEY | (uint32_t)saverFor(ms);
+        want = (int32_t)(snowUntil_ - ms) > 0 ? SNOW_KEY : IDLE_KEY | (uint32_t)saverFor(ms);
     }
+    if (snowHeld_) want = SNOW_KEY;
 
     bool changing = want != shownKey_;
     if (changing || !awake_) {
@@ -162,8 +180,11 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
     }
 
     paused_ = np.paused;
+    region_.on = false;
     if (shownKey_ & IDLE_KEY) {
         drawIdle(c, np, clock, ms);
+    } else if (shownKey_ == SNOW_KEY) {
+        drawSnow(c, ms);
     } else if (shownKey_ == LOADING_KEY) {
         audio_.update(ms);
         drawLoading(c, np, ms);
@@ -185,12 +206,18 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
         for (int y = 0; y < Canvas::H; y++) {
             uint8_t* row = c.rows[y];
             const uint8_t *even = fadeLut[(y & 1) * 2], *odd = fadeLut[(y & 1) * 2 + 1];
+            if (region_.on && y >= region_.y0 && y < region_.y1) {  // the cover fades through its palette
+                for (int x = 0; x < Canvas::W; x++)
+                    if (x < region_.x0 || x >= region_.x1) row[x] = (x & 1 ? odd : even)[row[x]];
+                continue;
+            }
             for (int x = 0; x < Canvas::W; x += 2) {
                 row[x] = even[row[x]];
                 row[x + 1] = odd[row[x + 1]];
             }
         }
     }
+    region_.level = level_;
 }
 
 void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
@@ -198,14 +225,15 @@ void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
     if (key == LOADING_KEY) loadingSince_ = ms;
     if (key & IDLE_KEY) {
         saver_ = (int)(key & 0xFF);
-    } else if (key != LOADING_KEY) {
+    } else if (key != LOADING_KEY && key != SNOW_KEY) {
         copyUtf8(title_, np.title, sizeof(title_));
         copyUtf8(artist_, np.artist, sizeof(artist_));
         art_ = np.art;
+        artColours_ = np.art ? np.artColours : 0;
         pal_ = np.pal;
         lineMarquee_ = {lineWidth16(title_, artist_), ms};
     }
-    artInUse_.store((key & IDLE_KEY) || key == LOADING_KEY ? nullptr : art_);
+    artInUse_.store((key & IDLE_KEY) || key == LOADING_KEY || key == SNOW_KEY ? nullptr : art_);
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +243,14 @@ void Scene::drawNowPlaying(Canvas& c, uint32_t ms) {
     Drift d = cardDrift(ms);
     c.fill(pal_.bg);
     for (int y = 0; y < ART_H; y++) copyArtRow(art_, y, c.rows[ART_Y + d.y + y] + ART_X + d.x);
+    if (artColours_ > 0) {
+        region_.on = true;
+        region_.x0 = ART_X + d.x, region_.y0 = ART_Y + d.y;
+        region_.x1 = region_.x0 + ART_W, region_.y1 = region_.y0 + ART_H;
+        region_.art = art_;
+        region_.colours = artColours_;
+        region_.version = shownKey_;
+    }
     drawCaption(c, title_, artist_, lineMarquee_, Offset{d.x, d.y}, pal_.title, pal_.artist, true, ms);
 }
 

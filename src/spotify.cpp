@@ -89,6 +89,19 @@ bool SpotifyClient::refreshAccessToken(SpotifyResult& failure) {
 }
 
 // The biggest cover (640 px): least compressed, and it streams through the decoder.
+static String pickThumb(JsonArrayConst images, int& bestW) {
+    String best;
+    bestW = 0;
+    for (JsonObjectConst img : images) {
+        int w = img["width"] | 0;
+        const char* url = img["url"];
+        if (!url || w < 32 || (bestW && w >= bestW)) continue;
+        best = url;
+        bestW = w;
+    }
+    return best;
+}
+
 static String pickImage(JsonArrayConst images, int& bestW) {
     String best;
     bestW = 0;
@@ -159,12 +172,14 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
     if (item["show"].is<JsonObjectConst>()) {  // podcast episode
         track.artist = item["show"]["name"] | "";
         track.imageUrl = pickImage(item["images"], track.imageWidth);
+        track.thumbUrl = pickThumb(item["images"], track.thumbWidth);
     } else {
         for (JsonObjectConst a : item["artists"].as<JsonArrayConst>()) {
             if (track.artist.length()) track.artist += ", ";
             track.artist += a["name"] | "";
         }
         track.imageUrl = pickImage(item["album"]["images"], track.imageWidth);
+        track.thumbUrl = pickThumb(item["album"]["images"], track.thumbWidth);
     }
     track.key = item["uri"] | "";
     if (track.key.isEmpty()) track.key = track.title + "\n" + track.artist;

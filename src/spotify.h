@@ -8,6 +8,8 @@ struct Track {
     String artist;    // all artists, comma-separated; the show for podcasts
     String imageUrl;  // empty for local files
     int imageWidth = 0;
+    String thumbUrl;  // the smallest size, for picking the cover's colours
+    int thumbWidth = 0;
     bool playing = false;
 };
 

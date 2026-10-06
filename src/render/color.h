@@ -27,8 +27,22 @@ inline RGB lerp(RGB a, RGB b, int t) {
 RGB hsv(float hueDeg, float s, float v);
 float luminance(RGB c);  // relative luminance, 0..1
 
-// Nearest RGB332 colour, perceptually weighted.
+// Nearest RGB332 colour as composite shows it (stray colour weighs more than brightness).
 uint8_t nearestRGB332(RGB c);
+
+// Near-neutral colours snap to the least tinted RGB332 grey, so edges stay clean on composite.
+struct GreyTable {
+    uint8_t entry[256];  // by brightness
+    GreyTable();
+};
+extern GreyTable GREY332;
+
+inline uint8_t toRGB332Clean(RGB c) {
+    int hi = c.r > c.g ? (c.r > c.b ? c.r : c.b) : (c.g > c.b ? c.g : c.b);
+    int lo = c.r < c.g ? (c.r < c.b ? c.r : c.b) : (c.g < c.b ? c.g : c.b);
+    if (hi - lo < 20) return GREY332.entry[(77 * c.r + 150 * c.g + 29 * c.b) >> 8];
+    return toRGB332(c);
+}
 
 // Colour statistics gathered from every decoded cover pixel.
 struct ArtStats {
