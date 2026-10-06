@@ -948,6 +948,32 @@ void ESP_8_BIT_composite::setBand(int y0, int y1, const uint32_t* palette)
   _bandp_ready = true;
 }
 
+void ESP_8_BIT_composite::pause()
+{
+  esp_intr_disable(_isr_handle);
+  I2S0.int_ena.out_eof = 0;
+  I2S0.out_link.stop = 1;
+  I2S0.conf.tx_start = 0;
+  I2S0.int_clr.val = 0xFFFFFFFF;
+}
+
+void ESP_8_BIT_composite::resume()
+{
+  // From the first of the two line buffers again, as start_dma() left it.
+  I2S0.lc_conf.out_rst = 1;
+  I2S0.lc_conf.out_rst = 0;
+  I2S0.conf.tx_reset = 1;
+  I2S0.conf.tx_reset = 0;
+  I2S0.conf.tx_fifo_reset = 1;
+  I2S0.conf.tx_fifo_reset = 0;
+  I2S0.out_link.addr = (uint32_t)_dma_desc;
+  I2S0.conf.tx_start = 1;
+  I2S0.int_clr.val = 0xFFFFFFFF;
+  I2S0.int_ena.out_eof = 1;
+  I2S0.out_link.start = 1;
+  esp_intr_enable(_isr_handle);
+}
+
 uint8_t** ESP_8_BIT_composite::getDisplayedFrameBufferLines()
 {
   return _lines;

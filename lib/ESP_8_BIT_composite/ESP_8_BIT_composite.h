@@ -116,6 +116,14 @@ class ESP_8_BIT_composite
     static void setBand(int y0, int y1, const uint32_t* palette);
 
     /*
+     * @brief Stop making the signal (no DMA, no line interrupts) so the CPU can idle while
+     * nothing is shown; resume() starts it again. Turn the DAC's output off first, and don't
+     * wait for a frame while paused.
+     */
+    static void pause();
+    static void resume();
+
+    /*
      * @brief The frame on screen now (the one before the back buffer's), for feedback effects.
      */
     uint8_t** getDisplayedFrameBufferLines();

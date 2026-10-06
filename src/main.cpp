@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <ESP_8_BIT_composite.h>
+#include <WiFi.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -117,7 +118,9 @@ static void showGlowPalette(const GlowRegion& g) {
 }
 
 // Sleep: after SLEEP_AFTER_MINUTES with nothing playing, fade out and power down
-// the DAC so the monitor sees no input. Returns true while the signal is off.
+// the DAC so the monitor sees no input. With nothing to make, the video stops too, the CPU
+// slows to 80 MHz and the radio dozes between beacons; Spotify is still asked every
+// POLL_IDLE_MS, so playing again wakes it as before. Returns true while the signal is off.
 static bool handleSleep() {
     if (np.playing) lastActiveMs = millis();
     const uint32_t sleepMs = SLEEP_AFTER_MINUTES * 60000UL, idleMs = millis() - lastActiveMs;
@@ -128,9 +131,17 @@ static bool handleSleep() {
 
     if (sleepy && scene.dark() && !signalOff) {
         dac_output_disable(VIDEO_DAC);
+        ESP_8_BIT_composite::pause();
+        WiFi.setSleep(true);
+        setCpuFrequencyMhz(80);
         signalOff = true;
-        Serial.println("Nothing played for a while: video signal off");
+        Serial.println("Nothing played for a while: video signal off, CPU at 80 MHz, Wi-Fi dozing");
     } else if (!sleepy && signalOff) {
+        setCpuFrequencyMhz(240);
+#if VISUALIZER
+        WiFi.setSleep(false);  // as netTask set it: the visualizer's packets arrive as sent
+#endif
+        ESP_8_BIT_composite::resume();
         dac_output_enable(VIDEO_DAC);
         signalOff = false;
         Serial.println("Playing again: video signal on");
