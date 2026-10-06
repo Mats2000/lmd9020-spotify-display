@@ -11,6 +11,7 @@ struct Canvas {
     static constexpr int H = 240;
 
     uint8_t** rows;
+    uint8_t** shown;  // the frame on screen now, for feedback effects; null when there isn't one
 
     void fill(uint8_t c) {
         for (int y = 0; y < H; y++) memset(rows[y], c, W);

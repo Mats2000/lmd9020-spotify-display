@@ -130,7 +130,11 @@ def main():
                     help="animation time in ms (moves the waves and marquee)")
     ap.add_argument("--gif", action="store_true", help="write animated GIFs instead of PNGs")
     ap.add_argument("--status", help="status line to show under the screensavers")
+    ap.add_argument("--audio", action="store_true",
+                    help="feed a made-up song to the visualizer, as tools/visualizer would")
     args = ap.parse_args()
+    if args.audio:
+        os.environ["PREVIEW_AUDIO"] = "1"
 
     exe = build()
     os.makedirs(OUT, exist_ok=True)

@@ -47,6 +47,16 @@ static int _regp_x0, _regp_y0, _regp_x1, _regp_y1;
 static const uint32_t* _regp_pal;
 static int _blit_y;  // framebuffer row being blitted
 
+// Rows drawn with a palette of their own (the visualizer's glow) instead of RGB332; the region
+// above still overrides it inside its rectangle. Switched with the buffers too.
+static bool _band_on = false;
+static int _band_y0, _band_y1;
+static const uint32_t* _band_pal;
+static volatile bool _bandp_ready = false;
+static bool _bandp_on;
+static int _bandp_y0, _bandp_y1;
+static const uint32_t* _bandp_pal;
+
 static float _hue_cos = 1, _hue_sin = 0;
 
 //====================================================================================================
@@ -505,10 +515,16 @@ uint32_t _isr_us = 0;
 #define ISR_END()
 #endif
 
+// The palette for framebuffer row y outside the region.
+static inline __attribute__((always_inline)) const uint32_t* row_palette(int y)
+{
+    return _band_on && y >= _band_y0 && y < _band_y1 ? _band_pal : _palette;
+}
+
 // A line crossing the region: each pixel picks its palette.
 static void IRAM_ATTR blit_region(const uint8_t* src, uint16_t* dst)
 {
-    const uint32_t* p = _palette;
+    const uint32_t* p = row_palette(_blit_y);
     const bool flip = _flip_;
     const int x0 = _reg_x0, x1 = _reg_x1;
     uint32_t color, c[4];
@@ -590,13 +606,14 @@ static inline __attribute__((always_inline)) void resample_span(const uint8_t* a
 
 // The four pixels at i, where the region's edge runs through: each picks its palettes.
 template <bool Flip>
-static inline __attribute__((always_inline)) void resample_edge(const uint8_t* a, const uint8_t* b, const uint32_t* p, const uint32_t* ra,
-                                 const uint32_t* rb, int x0, int x1, int i, uint16_t* dst)
+static inline __attribute__((always_inline)) void resample_edge(const uint8_t* a, const uint8_t* b, const uint32_t* pa,
+                                                                const uint32_t* pb, const uint32_t* ra, const uint32_t* rb,
+                                                                int x0, int x1, int i, uint16_t* dst)
 {
     uint32_t c[4];
     for (int k = 0; k < 4; k++) {
         const bool in = i + k >= x0 && i + k < x1;
-        c[k] = mix_samples((in ? ra : p)[a[i + k]], (in ? rb : p)[b[i + k]], Flip);
+        c[k] = mix_samples((in ? ra : pa)[a[i + k]], (in ? rb : pb)[b[i + k]], Flip);
     }
     store_group((uint32_t*)(dst + i * 3), c[0], c[1], c[2], c[3]);
 }
@@ -608,21 +625,22 @@ static inline __attribute__((always_inline)) void resample(int ya, int yb, uint1
 {
     const uint8_t* a = _lines[ya];
     const uint8_t* b = _lines[yb];
-    const uint32_t* p = _palette;
+    const uint32_t* pa = row_palette(ya);
+    const uint32_t* pb = row_palette(yb);
     const bool regA = _reg_on && ya >= _reg_y0 && ya < _reg_y1, regB = _reg_on && yb >= _reg_y0 && yb < _reg_y1;
     if (!regA && !regB) {
-        resample_span<Flip>(a, b, p, p, 0, 256, dst);
+        resample_span<Flip>(a, b, pa, pb, 0, 256, dst);
         return;
     }
-    const uint32_t* ra = regA ? _reg_pal : p;
-    const uint32_t* rb = regB ? _reg_pal : p;
+    const uint32_t* ra = regA ? _reg_pal : pa;
+    const uint32_t* rb = regB ? _reg_pal : pb;
     const int x0 = _reg_x0 < 0 ? 0 : _reg_x0, x1 = _reg_x1 > 256 ? 256 : _reg_x1;
     const int left = x0 & ~3, in0 = (x0 + 3) & ~3, in1 = x1 & ~3, right = (x1 + 3) & ~3;
-    resample_span<Flip>(a, b, p, p, 0, left, dst);
-    if (left < in0) resample_edge<Flip>(a, b, p, ra, rb, x0, x1, left, dst);
+    resample_span<Flip>(a, b, pa, pb, 0, left, dst);
+    if (left < in0) resample_edge<Flip>(a, b, pa, pb, ra, rb, x0, x1, left, dst);
     resample_span<Flip>(a, b, ra, rb, in0, in1, dst);
-    if (in1 < right) resample_edge<Flip>(a, b, p, ra, rb, x0, x1, in1, dst);
-    resample_span<Flip>(a, b, p, p, right, 256, dst);
+    if (in1 < right) resample_edge<Flip>(a, b, pa, pb, ra, rb, x0, x1, in1, dst);
+    resample_span<Flip>(a, b, pa, pb, right, 256, dst);
 }
 
 // Line ya of a field, resampled toward row yb (the row above in field 1, below in field 2).
@@ -635,7 +653,7 @@ static void IRAM_ATTR blit_resampled(int ya, int yb, uint16_t* dst)
 // draw a line of game in NTSC
 void IRAM_ATTR blit(uint8_t* src, uint16_t* dst)
 {
-    const uint32_t* p = _palette;
+    const uint32_t* p = row_palette(_blit_y);
     uint32_t color,c;
     uint32_t mask = 0xFF;
     int i;
@@ -798,6 +816,12 @@ static void IRAM_ATTR field_done()
         _reg_pal = _regp_pal;
         _regp_ready = false;
       }
+      if (_bandp_ready) {
+        _band_on = _bandp_on;
+        _band_y0 = _bandp_y0, _band_y1 = _bandp_y1;
+        _band_pal = _bandp_pal;
+        _bandp_ready = false;
+      }
 
       // Signal video_sync() swap has completed
       vTaskNotifyGiveFromISR(
@@ -913,6 +937,20 @@ void ESP_8_BIT_composite::setStandardLine(bool on)
 void ESP_8_BIT_composite::setInterlace(bool on)
 {
   _interlace_ = on;
+}
+
+void ESP_8_BIT_composite::setBand(int y0, int y1, const uint32_t* palette)
+{
+  _bandp_ready = false;
+  _bandp_on = palette != nullptr;
+  _bandp_y0 = y0, _bandp_y1 = y1;
+  _bandp_pal = palette;
+  _bandp_ready = true;
+}
+
+uint8_t** ESP_8_BIT_composite::getDisplayedFrameBufferLines()
+{
+  return _lines;
 }
 
 void ESP_8_BIT_composite::setRegion(int x0, int y0, int x1, int y1, const uint32_t* palette)

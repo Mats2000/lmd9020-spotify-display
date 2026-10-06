@@ -8,17 +8,18 @@
 #include "fonts.h"
 #include "savers.h"
 #include "text.h"
+#include "visualizer.h"
 
 namespace {
 
 constexpr int SLEEP_FADE_MS = 3000;
+constexpr int GLOW_FADE_MS = 1200;  // the card to the visualizer and back
 constexpr uint32_t IDLE_KEY = 0x80000000u;
 constexpr uint32_t LOADING_KEY = 0x40000000u;  // playing, cover still downloading: black
 constexpr uint32_t SNOW_KEY = 0x20000000u;     // full-screen TV snow, to clear the LCD
 
 // ---- Now playing ----
-constexpr int LABEL_BASE = 17;                 // the label's baseline
-constexpr int ART_Y = LABEL_BASE + 5;          // cover top
+constexpr int ART_Y = 14;                      // cover top
 constexpr int ART_X = (Canvas::W - ART_W) / 2;
 constexpr int LINE_GAP = 7;                    // cover bottom to the text line's cap top
 constexpr int TEXT_LEFT = 18;
@@ -147,6 +148,7 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
     if (dt > 100) dt = 100;  // don't jump after a stall
     started_ = true;
     lastMs_ = ms;
+    dtMs_ = dt;
 
     uint32_t want;
     if (np.playing) {
@@ -181,6 +183,8 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
 
     paused_ = np.paused;
     region_.on = false;
+    glow_.on = false;
+    if (shownKey_ & IDLE_KEY || shownKey_ == SNOW_KEY || shownKey_ == LOADING_KEY || !shownKey_) viz_.fed = false;
     if (shownKey_ & IDLE_KEY) {
         drawIdle(c, np, clock, ms);
     } else if (shownKey_ == SNOW_KEY) {
@@ -190,12 +194,12 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
         drawLoading(c, np, ms);
     } else if (shownKey_) {
         audio_.update(ms);
-        drawNowPlaying(c, ms);
+        drawNowPlaying(c, np, ms);
     }
     else
         c.fill(0);
 
-    if (level_ < 256) {
+    if (level_ < 256 && !glow_.on) {  // the visualizer fades through its palette instead
         for (int p = 0; p < 4; p++)
             for (int i = 0; i < 256; i++) {
                 RGB q = fromRGB332((uint8_t)i);
@@ -218,6 +222,7 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
         }
     }
     region_.level = level_;
+    glow_.level = level_;
 }
 
 void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
@@ -239,9 +244,39 @@ void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
 // ---------------------------------------------------------------------------
 // Now playing
 
-void Scene::drawNowPlaying(Canvas& c, uint32_t ms) {
+void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms) {
     Drift d = cardDrift(ms);
-    c.fill(pal_.bg);
+    // The visualizer while the Mac sends the music; a solid background otherwise.
+#if VISUALIZER
+    const bool heard = np.audio.active && np.audio.atMs && (int32_t)(ms - np.audio.atMs) < 800;  // signed: atMs can be a hair ahead
+#else
+    const bool heard = false;
+#endif
+    const int step = dtMs_ * 256 / GLOW_FADE_MS + 1;
+    glowAmount_ = heard ? (glowAmount_ + step > 256 ? 256 : glowAmount_ + step) : (glowAmount_ > step ? glowAmount_ - step : 0);
+    const bool glowing = glowAmount_ > 0;
+    if (glowing) {
+        static const NowPlaying::Audio QUIET;
+        const NowPlaying::Audio& a = heard ? np.audio : QUIET;
+        auto mean = [&](int from, int to) {
+            int s = 0;
+            for (int i = from; i < to; i++) s += a.band[i];
+            return s / (255.0f * (to - from));
+        };
+        const VizInput in{a.band, mean(0, 4), mean(5, 11), mean(11, 16), a.beat / 255.0f};
+        const int x0 = ART_X + d.x, y0 = ART_Y + d.y;
+        // The style stays put while fading out, though the music has stopped saying which.
+        if (heard) vizStyle_ = np.audio.style < VIZ_COUNT ? np.audio.style : 0;
+        drawVisualizer(vizStyle_, c, x0, y0, x0 + ART_W, y0 + ART_H, y0 + ART_H + 4,
+                       (dtMs_ > 100 ? 100 : dtMs_) * 0.001f, ms, in, viz_);
+        glow_.on = true;
+        glow_.look = glowLook(pal_, glowAmount_, vizStyle_);
+        glow_.style = vizStyle_;
+        glow_.version = shownKey_;
+    } else {
+        c.fill(pal_.bg);
+        viz_.fed = false;
+    }
     for (int y = 0; y < ART_H; y++) copyArtRow(art_, y, c.rows[ART_Y + d.y + y] + ART_X + d.x);
     if (artColours_ > 0) {
         region_.on = true;
@@ -251,8 +286,9 @@ void Scene::drawNowPlaying(Canvas& c, uint32_t ms) {
         region_.colours = artColours_;
         region_.version = shownKey_;
     }
-    drawCaption(c, title_, artist_, lineMarquee_, Offset{d.x, d.y}, pal_.title, pal_.artist, true, ms);
+    drawCaption(c, title_, artist_, lineMarquee_, Offset{d.x, d.y}, pal_.title, pal_.artist, true, ms, glowing);
 }
+
 
 // While the next cover downloads: its title and artist on dark, in the same place.
 void Scene::drawLoading(Canvas& c, const NowPlaying& np, uint32_t ms) {
@@ -268,34 +304,20 @@ int Scene::lineWidth16(const char* title, const char* artist) {
 }
 
 void Scene::drawCaption(Canvas& c, const char* title, const char* artist, const Marquee& m, Offset d,
-                        RGB titleColor, RGB artistColor, bool precise, uint32_t ms) {
-    // "NOW PLAYING" with three level bars (flat while paused).
-    const int labelBase = LABEL_BASE + d.y;
-    const char* label = paused_ ? "PAUSED" : "NOW PLAYING";
-    const int barsW = 8, gap = 5;
-    int textW = textWidth16(sora_micro, label) / 16;
-    int x0 = Canvas::W / 2 + d.x - (barsW + gap + textW) / 2;
-    const uint8_t barColor = toRGB332(artistColor);
-    static const int BAND[3] = {2, 7, 12};
-    for (int i = 0; i < 3; i++) {
-        int h = paused_ ? 1 : 1 + (int)(audio_.band(BAND[i]) * 6.0f + 0.5f);
-        fillRect(c, x0 + i * 3, labelBase - h + 1, 2, h, barColor);
-    }
-    TextStyle ls;
-    ls.color = artistColor;
-    ls.precise = precise;
-    drawText(c, sora_micro, label, (x0 + barsW + gap) * 16, labelBase, ls);
-
+                        RGB titleColor, RGB artistColor, bool precise, uint32_t ms, bool glow) {
     // Title (SemiBold) and artist (Regular) side by side under the cover.
     const int baseline = ART_Y + d.y + ART_H + LINE_GAP + sora_title.cap;
     TextStyle st;
     st.precise = precise;
     st.clipLeft = TEXT_LEFT + d.x;
     st.clipRight = TEXT_RIGHT + d.x;
+    st.rampLevels = GLOW_TEXT_LEVELS;
     auto line = [&](int x16) {
         st.color = titleColor;
+        st.ramp = glow ? GLOW_TITLE : 0;  // over the visualizer: through its palette
         x16 = drawText(c, sora_title, title, x16, baseline, st);
         st.color = artistColor;  // same size, lighter weight
+        st.ramp = glow ? GLOW_ARTIST : 0;
         x16 = drawText(c, sora_title_regular, SEPARATOR, x16, baseline, st);
         drawText(c, sora_title_regular, artist, x16, baseline, st);
     };

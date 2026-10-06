@@ -15,6 +15,9 @@ struct TextStyle {
     int fadeLeft = 0, fadeRight = 0;  // soft edge widths at the clip, px
     // Nearest-palette edge colours; slower, so only for text on a plain background.
     bool precise = false;
+    // > 0: write palette indices ramp .. ramp + rampLevels - 1 by coverage instead of colours,
+    // for text over a background of index 0 in a palette of its own (the visualizer's).
+    int ramp = 0, rampLevels = 0;
 };
 
 // Draws with the pen at x16 (1/16 px) on the baseline; returns the pen position after.

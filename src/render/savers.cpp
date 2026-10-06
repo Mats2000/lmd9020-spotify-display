@@ -21,15 +21,6 @@ float cycle(uint32_t ms, double perSec, double period) {
 
 uint8_t dim(RGB c, int a) { return toRGB332(lerp(BLACK, c, a)); }
 
-// Sine to about 0.1%, for per-particle work: newlib's sinf is slow on the ESP32, very slow
-// once the angle is large.
-inline float fastSin(float x) {
-    int k = (int)(x * 0.15915494f + (x >= 0 ? 0.5f : -0.5f));
-    x -= k * 6.2831853f;  // now within [-pi, pi]
-    float y = 1.27323954f * x - 0.40528473f * x * fabsf(x);
-    return 0.225f * (y * fabsf(y) - y) + y;
-}
-inline float fastCos(float x) { return fastSin(x + 1.5707963f); }
 
 void textCentered(Canvas& c, const Font& font, const char* s, float cx, int baseline, RGB color,
                   int opacity = 256) {

@@ -81,6 +81,14 @@
 // Slow pixel drift against LCD burn-in.
 #define BURNIN_SHIFT 1
 
+// ---- Visualizer ------------------------------------------------------------
+
+// tools/visualizer on the Mac listens to Spotify there and sends the music's frequency bands
+// here over Wi-Fi; the card then glows to the music behind the cover. With nothing arriving
+// (helper not running, Spotify playing elsewhere) the card keeps its solid background.
+#define VISUALIZER 1
+#define VISUALIZER_PORT 4210  // bands arrive here; the display announces itself on the next port
+
 // ---- Look ------------------------------------------------------------------
 
 // Error-diffusion dithering on the cover (RGB332 bands without it).

@@ -1,6 +1,7 @@
 #include "net.h"
 
 #include <WiFi.h>
+#include <lwip/sockets.h>
 #include <stdarg.h>
 #include <time.h>
 
@@ -89,6 +90,9 @@ bool placeholder(const char* s) { return strncmp(s, "PASTE", 5) == 0 || !s[0]; }
 
 void netTask(void*) {
     WiFi.mode(WIFI_STA);
+#if VISUALIZER
+    WiFi.setSleep(false);  // in power save, packets would arrive in bursts at each beacon
+#endif
     WiFi.setHostname("lmd9020-spotify");
     WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -182,6 +186,60 @@ void netTask(void*) {
 
 }  // namespace
 
+#if VISUALIZER
+// Packets from tools/visualizer: "LMDV", version 1, flags (bit 0: music playing), level,
+// beat, 16 bands (low to high, each 0..255), then the visualizer style (a VizStyle). Every 2 s the display announces itself
+// ("LMD9020 1") by broadcast on the next port, so the Mac can find it.
+void vizTask(void*) {
+    int s = -1;
+    uint32_t lastAnnounce = 0;
+    for (;;) {
+        if (WiFi.status() != WL_CONNECTED) {
+            if (s >= 0) close(s), s = -1;
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+        if (s < 0) {
+            s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (s < 0) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                continue;
+            }
+            int yes = 1;
+            setsockopt(s, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+            timeval tv = {0, 200000};
+            setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            sockaddr_in a = {};
+            a.sin_family = AF_INET;
+            a.sin_port = htons(VISUALIZER_PORT);
+            a.sin_addr.s_addr = htonl(INADDR_ANY);
+            bind(s, (sockaddr*)&a, sizeof(a));
+        }
+        if (millis() - lastAnnounce > 2000) {
+            static const char HELLO[] = "LMD9020 1";
+            sockaddr_in b = {};
+            b.sin_family = AF_INET;
+            b.sin_port = htons(VISUALIZER_PORT + 1);
+            b.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            sendto(s, HELLO, sizeof(HELLO) - 1, 0, (sockaddr*)&b, sizeof(b));
+            lastAnnounce = millis();
+        }
+        uint8_t buf[32];
+        int len = recv(s, buf, sizeof(buf), 0);
+        if (len >= 24 && memcmp(buf, "LMDV", 4) == 0 && buf[4] == 1) {
+            xSemaphoreTake(lock, portMAX_DELAY);
+            shared.audio.active = buf[5] & 1;
+            shared.audio.level = buf[6];
+            shared.audio.beat = buf[7];
+            memcpy(shared.audio.band, buf + 8, sizeof(shared.audio.band));
+            shared.audio.style = len >= 25 ? buf[24] : 0;
+            shared.audio.atMs = millis() | 1;
+            xSemaphoreGive(lock);
+        }
+    }
+}
+#endif
+
 void netStart(const Scene* s) {
     scene = s;
     lock = xSemaphoreCreateMutex();
@@ -195,6 +253,9 @@ void netStart(const Scene* s) {
         abort();
     }
     xTaskCreatePinnedToCore(netTask, "net", 9728, nullptr, 1, nullptr, 0);  // peaks near 7 KB
+#if VISUALIZER
+    xTaskCreatePinnedToCore(vizTask, "viz", 2304, nullptr, 1, nullptr, 0);
+#endif
 }
 
 void netSnapshot(NowPlaying& out) {

@@ -7,6 +7,7 @@
 #include "color.h"
 #include "fakeaudio.h"
 #include "font.h"
+#include "visualizer.h"
 
 // The latest from Spotify, copied to the render loop every frame.
 struct NowPlaying {
@@ -19,6 +20,13 @@ struct NowPlaying {
     int artColours = 0;             // > 0: art indexes its own palette instead (see buildArtPalette)
     ScenePalette pal = defaultPalette();
     char status[72] = "";          // shown on the screensaver while something needs attention
+    struct Audio {                 // from tools/visualizer on the Mac, when it's running
+        uint8_t band[16] = {};     // 0..255, low to high
+        uint8_t level = 0, beat = 0;
+        uint8_t style = 0;         // a VizStyle, chosen in the app
+        bool active = false;       // music is playing there
+        uint32_t atMs = 0;         // millis() when the last update arrived; 0 = never
+    } audio;
 };
 
 struct ClockTime {
@@ -39,6 +47,16 @@ struct CoverRegion {
     uint32_t version = 0;  // changes with the cover
 };
 
+// The visualizer: when on, everything but the cover is drawn with glowColour(look, index) at
+// `level` brightness.
+struct GlowRegion {
+    bool on = false;
+    GlowLook look;
+    int level = 256;
+    int style = 0;
+    uint32_t version = 0;  // changes with the cover
+};
+
 // Draws a frame: the now-playing card or a screensaver, with fades between them.
 class Scene {
 public:
@@ -52,6 +70,7 @@ public:
     bool dark() const { return level_ == 0; }
 
     const CoverRegion& coverRegion() const { return region_; }
+    const GlowRegion& glowRegion() const { return glow_; }
 
     // Full-screen TV snow whatever is playing (panel refresh: the BOOT button, before sleep).
     void holdSnow(bool on) { snowHeld_ = on; }
@@ -67,13 +86,13 @@ private:
 
     int saverFor(uint32_t ms) const;
     void adopt(const NowPlaying& np, uint32_t key, uint32_t ms);
-    void drawNowPlaying(Canvas& c, uint32_t ms);
+    void drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms);
     void drawLoading(Canvas& c, const NowPlaying& np, uint32_t ms);
     struct Offset {
         int x, y;
     };
     void drawCaption(Canvas& c, const char* title, const char* artist, const Marquee& m, Offset d,
-                     RGB titleColor, RGB artistColor, bool precise, uint32_t ms);
+                     RGB titleColor, RGB artistColor, bool precise, uint32_t ms, bool glow = false);
     static int lineWidth16(const char* title, const char* artist);
     void drawIdle(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint32_t ms);
 
@@ -83,6 +102,11 @@ private:
     const uint32_t* art_ = nullptr;
     int artColours_ = 0;
     CoverRegion region_;
+    GlowRegion glow_;
+    int glowAmount_ = 0;     // 0..256: how far the card has blended into the visualizer
+    VizState viz_;
+    int vizStyle_ = 0;
+    int dtMs_ = 0;
     ScenePalette pal_ = defaultPalette();  // kept after a track ends to tint the waves
     Marquee lineMarquee_{};
 

@@ -4,12 +4,12 @@ An ESP32-DevKitC V4 turns a Sony LMD-9020 into a now-playing screen for
 Spotify. It generates colour composite video directly from the ESP32's DAC
 and feeds it into the monitor's BNC input.
 
-- **Playing:** a small "NOW PLAYING" label with three level bars on top
-  ("PAUSED" during a short pause), the album cover (145×184 pixels) below
-  it, and the song title and artist side by side on one line underneath,
-  all on a flat background in the complementary colour of the cover's
-  dominant hue. While the next cover downloads (two or three seconds), its
-  title shows on dark in the same place.
+- **Playing:** the album cover (145×184 pixels) with the song title and
+  artist side by side on one line underneath, on a flat background in the
+  complementary colour of the cover's dominant hue. With the helper running
+  on your Mac, the background becomes a visualizer glowing to the music (see
+  [Visualizer](#visualizer)). While the next cover downloads (two or three
+  seconds), its title shows on dark in the same place.
 - **Not playing:** the clock and date over a rotating set of screensavers,
   fading to the next every 20 minutes. Particle scenes, tinted from the
   last cover you played:
@@ -182,6 +182,43 @@ every screensaver to `tools/preview/out/`, stretched to the monitor's pixel
 aspect. Use `--cover some.jpg --title "…"
 --artist "…"` to try a real cover. It also needs Xcode's command line tools
 (for the C++ compiler).
+
+## Visualizer
+
+When Spotify plays on your Mac, the **LMD Visualizer** app there listens to it and sends the
+music's frequency bands to the display, which then animates the background behind the cover
+to the music, through a palette of its own in the cover's colours so it stays smooth on
+composite. When the app isn't running, or Spotify plays somewhere else, the card blends back
+to its solid background. The app's window shows a live preview of the display, drawn by the
+firmware's own scene code, and picks the style:
+
+- **Classic Glow:** loops swirling out in soft feedback trails, after the classic iTunes look.
+- **Spectrum:** a 2000s receiver's fluorescent analyzer, split by the cover (lows at the left,
+  highs at the right): soft pills of ice-white phosphor behind dark glass, bars that move like
+  a meter's needle, peaks that hold then fall away.
+- **Pulse Halo:** a glow breathing around the cover, rippling outward on each beat.
+- **Aurora:** curtains of light swaying behind the cover, rising and brightening with the music.
+- **Lava:** slow, smooth colour waves, quicker and brighter with the music.
+- **Off:** the card's normal solid background, even with the app running.
+
+```sh
+.venv/bin/python tools/visualizer/make_icon.py   # only after changing the icon
+tools/visualizer/build.sh                        # builds tools/visualizer/build/LMD Visualizer.app
+cp -R "tools/visualizer/build/LMD Visualizer.app" /Applications/
+```
+
+The first time, macOS asks to allow screen and system audio recording (that's how one app's
+sound is captured; nothing of the screen is used), control of Spotify (to see whether it's
+playing, and for the song and cover in the preview) and access to devices on the local network.
+It only records while Spotify plays, so the menu bar's recording indicator goes away about ten
+seconds after the music stops (and never shows with the style set to Off). After allowing recording in System
+Settings > Privacy & Security, quit and reopen the app. Closing the window keeps it streaming
+(click its Dock icon to bring it back; Quit stops it), and "Open at login" starts it with the
+Mac. It finds the display by itself; if your network blocks broadcasts, give it the address:
+`defaults write com.sentiainstruments.lmd-visualizer host 192.168.1.82`.
+
+It sends 25 bytes 60 times a second over UDP (port 4210; the display announces itself on
+4211). `VISUALIZER 0` in `include/config.h` turns it off on the display.
 
 ## Burn-in
 

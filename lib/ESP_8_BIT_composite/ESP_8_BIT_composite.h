@@ -110,6 +110,17 @@ class ESP_8_BIT_composite
     static void setRegion(int x0, int y0, int x1, int y1, const uint32_t* palette);
 
     /*
+     * @brief From the next buffer swap, rows [y0, y1) index `palette` (256 encodeColor()
+     * values) instead of RGB332, except inside the region. nullptr turns it off.
+     */
+    static void setBand(int y0, int y1, const uint32_t* palette);
+
+    /*
+     * @brief The frame on screen now (the one before the back buffer's), for feedback effects.
+     */
+    uint8_t** getDisplayedFrameBufferLines();
+
+    /*
      * @brief Wait for current frame to finish rendering
      */
     void waitForFrame();

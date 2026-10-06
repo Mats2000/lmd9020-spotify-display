@@ -90,6 +90,32 @@ static void showCoverPalette(const CoverRegion& r) {
     ESP_8_BIT_composite::setRegion(r.x0, r.y0, r.x1, r.y1, encoded);
 }
 
+// The visualizer's palette, encoded at the scene's brightness, for every row while it's on.
+static uint32_t glowTable[256];
+
+static void showGlowPalette(const GlowRegion& g) {
+    static int amount = -1, level = -1, style = -1;
+    static uint32_t version = 0;
+    static bool wasOn = false;
+    if (g.on != wasOn) {
+        Serial.println(g.on ? "Visualizer: on" : "Visualizer: off");
+        wasOn = g.on;
+    }
+    if (!g.on) {
+        ESP_8_BIT_composite::setBand(0, 0, nullptr);
+        amount = level = style = -1;
+        return;
+    }
+    if (g.look.amount != amount || g.level != level || g.version != version || g.style != style) {
+        for (int i = 0; i < 256; i++) {
+            RGB c = glowColour(g.look, i);
+            glowTable[i] = ESP_8_BIT_composite::encodeColor(c.r, c.g, c.b, g.level);
+        }
+        amount = g.look.amount, level = g.level, version = g.version, style = g.style;
+    }
+    ESP_8_BIT_composite::setBand(0, Canvas::H, glowTable);
+}
+
 // Sleep: after SLEEP_AFTER_MINUTES with nothing playing, fade out and power down
 // the DAC so the monitor sees no input. Returns true while the signal is off.
 static bool handleSleep() {
@@ -134,9 +160,11 @@ void loop() {
     clock.mday = local.tm_mday;
 
     Canvas canvas{video.getFrameBufferLines()};
+    canvas.shown = video.getDisplayedFrameBufferLines();
     uint32_t start = micros();
     scene.render(canvas, np, clock, millis());
     showCoverPalette(scene.coverRegion());
+    showGlowPalette(scene.glowRegion());
 
     // Over two fields (33 ms) drops a frame.
     static uint32_t slowest = 0, total = 0, frames = 0, overBudget = 0, lastReport = 0;

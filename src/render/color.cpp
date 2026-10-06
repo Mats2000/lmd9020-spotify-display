@@ -94,6 +94,7 @@ static ScenePalette finish(RGB bg, float hue) {
         p.artist = lerp(p.bgRGB, p.title, 184);
     }
     p.accent = hsv(hue, 0.30f, 1.0f);
+    p.hue = hue;
     return p;
 }
 
@@ -116,6 +117,7 @@ ScenePalette pickPalette(const ArtStats& s) {
         // Both greys are exact RGB332 colours, so they stay neutral.
         ScenePalette p = finish(meanLum > 0.32f ? RGB{73, 73, 85} : RGB{109, 109, 85}, 220.0f);
         p.accent = RGB{210, 214, 222};
+        p.colourful = 0.15f;
         return p;
     }
 
@@ -154,4 +156,42 @@ ScenePalette pickPalette(const ArtStats& s) {
             hi = mid;
     }
     return finish(hsv(hue, sat, 0.5f * (lo + hi)), hue);
+}
+
+GlowLook glowLook(const ScenePalette& p, int amount, int style) {
+    const float own = p.hue + 180, other = p.hue, k = p.colourful;
+    GlowLook g;
+    g.stops[0] = RGB{0, 0, 0};
+    if (style == 1) {  // VIZ_SPECTRUM: filtered phosphor, ice white, whatever the cover
+        g.stops[1] = RGB{40, 87, 106};
+        g.stops[2] = RGB{120, 188, 210};
+        g.stops[3] = RGB{197, 235, 245};
+        g.stops[4] = RGB{238, 250, 252};
+    } else {
+        g.stops[1] = hsv(own, 0.85f * k, 0.30f);    // deep, in the cover's colour
+        g.stops[2] = hsv(other, 0.55f * k, 0.50f);  // its complement through the middle
+        g.stops[3] = hsv(own, 0.70f * k, 0.85f);
+        g.stops[4] = hsv(own + 20, 0.20f * k, 1.0f);  // nearly white at the hottest
+    }
+    g.bg = p.bgRGB;
+    g.title = p.title;
+    g.artist = p.artist;
+    g.amount = amount;
+    return g;
+}
+
+RGB glowColour(const GlowLook& g, int index) {
+    static const float AT[5] = {0.0f, 0.30f, 0.60f, 0.85f, 1.0f};
+    const RGB base = lerp(g.bg, g.stops[0], g.amount);
+    if (index >= GLOW_TITLE) {  // text over the darkest glow, fading in from the plain card's
+        const bool title = index < GLOW_ARTIST;
+        const int k = index - (title ? GLOW_TITLE : GLOW_ARTIST);
+        const RGB ink = lerp(title ? g.title : g.artist, title ? RGB{250, 246, 240} : RGB{214, 208, 200}, g.amount);
+        return lerp(base, ink, (k + 1) * 256 / GLOW_TEXT_LEVELS);
+    }
+    const float u = (float)index / (GLOW_LEVELS - 1);
+    int s = 0;
+    while (s < 3 && u > AT[s + 1]) s++;
+    const RGB c = lerp(g.stops[s], g.stops[s + 1], (int)((u - AT[s]) / (AT[s + 1] - AT[s]) * 256));
+    return lerp(g.bg, c, g.amount);
 }

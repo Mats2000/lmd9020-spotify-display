@@ -1,5 +1,7 @@
 #pragma once
 
+#include <math.h>
+
 #include "canvas.h"
 
 // Drawing primitives. Framebuffer coordinates; everything clips.
@@ -29,3 +31,13 @@ inline uint8_t dither332(RGB c, int x, int y) {
 // Deterministic noise, so animations are a pure function of time.
 float hash01(uint32_t n);                 // 0..1
 float valueNoise(uint32_t seed, float t);  // smooth 0..1
+
+// Sine to about 0.1%, for per-particle work: newlib's sinf is slow on the ESP32, very slow
+// once the angle is large.
+inline float fastSin(float x) {
+    int k = (int)(x * 0.15915494f + (x >= 0 ? 0.5f : -0.5f));
+    x -= k * 6.2831853f;  // now within [-pi, pi]
+    float y = 1.27323954f * x - 0.40528473f * x * fabsf(x);
+    return 0.225f * (y * fabsf(y) - y) + y;
+}
+inline float fastCos(float x) { return fastSin(x + 1.5707963f); }

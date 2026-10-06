@@ -4,3 +4,4 @@ tools/preview/build/
 tools/preview/out/
 __pycache__/
 .venv/
+tools/visualizer/build/

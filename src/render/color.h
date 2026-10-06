@@ -61,8 +61,23 @@ struct ScenePalette {
     RGB bgRGB;       // the same colour, expanded
     RGB title, artist;
     RGB accent;      // tints the idle wave field after this track
+    float hue = 220;        // the background's hue; the cover's own is opposite
+    float colourful = 1;    // 0 for a greyscale cover
 };
 
 ScenePalette defaultPalette();
 // Background in the complement of the cover's dominant hue, with readable text colours.
 ScenePalette pickPalette(const ArtStats& stats);
+
+// The visualizer's 256 colours: a glow ramp (0 dark .. GLOW_LEVELS - 1 bright) in the cover's
+// colours, then ramps for the title and the artist over the glow's darkest colour. `amount`
+// (0..256) blends all of it from the plain card (its background and text colours), so the
+// glow can fade in and out without a jump.
+constexpr int GLOW_LEVELS = 232, GLOW_TITLE = 232, GLOW_ARTIST = 244, GLOW_TEXT_LEVELS = 12;
+struct GlowLook {
+    RGB stops[5];  // the ramp at 0, 0.30, 0.60, 0.85 and 1
+    RGB bg, title, artist;
+    int amount;
+};
+GlowLook glowLook(const ScenePalette& p, int amount, int style = 0);
+RGB glowColour(const GlowLook& g, int index);

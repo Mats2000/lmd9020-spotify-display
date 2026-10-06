@@ -93,6 +93,17 @@ int drawText(Canvas& c, const Font& font, const char* s, int x16, int baseline,
                     uint8_t b = bits[row * stride + (col >> 1)];
                     int a = (col & 1) ? (b & 15) : (b >> 4);
                     if (!a) continue;
+                    if (st.ramp > 0) {
+                        int alpha = a * st.opacity / 15;
+                        if (st.fadeLeft > 0 && x - st.clipLeft < st.fadeLeft)
+                            alpha = alpha * (x - st.clipLeft + 1) / (st.fadeLeft + 1);
+                        if (st.fadeRight > 0 && st.clipRight - 1 - x < st.fadeRight)
+                            alpha = alpha * (st.clipRight - x) / (st.fadeRight + 1);
+                        int level = (alpha * st.rampLevels + 128) >> 8;
+                        if (level > st.rampLevels) level = st.rampLevels;
+                        if (level > 0) c.rows[y][x] = (uint8_t)(st.ramp + level - 1);
+                        continue;
+                    }
                     if (a == 15 && plain) {  // the solid interior: no blending needed
                         c.rows[y][x] = solid;
                         continue;
