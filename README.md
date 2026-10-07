@@ -49,7 +49,7 @@ and feeds it into the monitor's BNC input.
 - All text is set in **Sora**.
 - Everything drifts slowly, and TV snow runs between music and clock, to
   protect the LCD from ghosting (see [Burn-in](#burn-in)).
-- **Sleep:** after an hour with nothing playing, the picture fades out and
+- **Sleep:** after 20 minutes with nothing playing, the picture fades out and
   the video signal stops completely, so the monitor sees no input. It comes
   back on its own when you play something.
 
@@ -233,7 +233,7 @@ things fight it:
   path wanders over the whole area instead of retracing.
 - **TV snow.** Full-screen snow swings every pixel between black and white,
   which clears a held image: for 15 seconds when the music stops, for the
-  last 5 minutes before sleep, and for 30 minutes when you press the board's
+  last minute before sleep, and for 30 minutes when you press the board's
   **BOOT** button (press again to stop; it also wakes the display). Times are
   `REFRESH_*` in `include/config.h`.
 - **Rotation.** The screensaver changes every `SAVER_MINUTES` (20), so the
@@ -244,12 +244,14 @@ things fight it:
 
 ## Sleep
 
-After `SLEEP_AFTER_MINUTES` (60) with nothing playing on Spotify, the
+After `SLEEP_AFTER_MINUTES` (20) with nothing playing on Spotify, the
 picture fades out over 3 seconds and the ESP32 powers down its DAC, so the
 BNC line sits at 0 V with no sync. The monitor treats that as no input;
 whether it then shows "no signal" or goes into standby is up to its own
-settings. The ESP32 keeps polling Spotify, and when playback starts it powers
-the signal back up and fades in, usually within 5 to 7 seconds. Set
+settings. While asleep it also stops making video, slows its CPU to 80 MHz
+and lets Wi-Fi doze between beacons. It keeps polling Spotify, and when
+playback starts it powers the signal back up and fades in, usually within
+5 to 7 seconds. Set
 `SLEEP_AFTER_MINUTES 0` to never sleep.
 
 ## How it works

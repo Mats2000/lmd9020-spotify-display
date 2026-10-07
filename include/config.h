@@ -67,13 +67,13 @@
 // ---- Sleep -----------------------------------------------------------------
 
 // Minutes with nothing playing before the video signal turns off. 0 = never.
-#define SLEEP_AFTER_MINUTES 60
+#define SLEEP_AFTER_MINUTES 20
 
 // Full-screen TV snow keeps the LCD from holding an image (ghosting): this long after the
-// music stops, for the last minutes before sleep, and for a while when the board's BOOT
+// music stops, for the last minute(s) before sleep, and for a while when the board's BOOT
 // button is pressed (press again to stop).
 #define REFRESH_AFTER_MUSIC_SECONDS 15
-#define REFRESH_BEFORE_SLEEP_MINUTES 5
+#define REFRESH_BEFORE_SLEEP_MINUTES 1
 #define REFRESH_BUTTON_MINUTES 30
 
 // ---- Burn-in protection ----------------------------------------------------
