@@ -11,7 +11,7 @@ Https https;
 
 namespace {
 
-constexpr uint32_t IO_TIMEOUT_MS = 10000;
+constexpr uint32_t IO_TIMEOUT_MS = 5000;  // a stalled download rarely recovers; retry sooner
 
 WiFiClient tcp;
 br_ssl_client_context* sc;

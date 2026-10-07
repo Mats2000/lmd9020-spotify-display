@@ -4,12 +4,34 @@
 #include <stdlib.h>
 #include <string.h>
 
-ArtBuilder::~ArtBuilder() { free(band_); }
+#ifdef ARDUINO
+#include <esp_heap_caps.h>
+#endif
+
+ArtBuilder::~ArtBuilder() { free((void*)band_); }
+
+void ArtBuilder::allocBand(int rows, int w) {
+    free((void*)band_);
+    bandStride_ = (w + 1) / 2;
+    const size_t bytes = (size_t)rows * bandStride_ * 4;
+    void* p = nullptr;
+#ifdef ARDUINO
+    // Only IRAM proper (0x4008_0000..0x400A_0000): the rest of the executable heap is ordinary
+    // RAM seen through another address, which would gain nothing.
+    p = heap_caps_malloc(bytes, MALLOC_CAP_EXEC);
+    if (p && ((uintptr_t)p < 0x40080000 || (uintptr_t)p + bytes > 0x400A0000)) {
+        heap_caps_free(p);
+        p = nullptr;
+    }
+#endif
+    if (!p) p = malloc(bytes);
+    band_ = (volatile uint32_t*)p;
+    bandCap_ = band_ ? rows : 0;
+}
 
 void ArtBuilder::reserve(int srcW, int bandRows) {
     if (band_) return;
-    band_ = (uint16_t*)malloc((size_t)bandRows * srcW * 2);
-    bandCap_ = band_ ? bandRows : 0;
+    allocBand(bandRows, srcW);
     reservedW_ = band_ ? srcW : 0;
 }
 
@@ -51,16 +73,18 @@ void ArtBuilder::block(const uint8_t* rgb, int x0, int y0, int x1, int y1) {
         bandRows_ = bh;
         if (bh > bandCap_ || (reservedW_ && reservedW_ < srcW_)) {
             reservedW_ = 0;
-            free(band_);
-            band_ = (uint16_t*)malloc((size_t)bh * srcW_ * 2);
-            bandCap_ = band_ ? bh : 0;
+            allocBand(bh, srcW_);
         }
     }
     if (!band_ || x1 >= srcW_) return;
     for (int r = 0; r < bh && r < bandRows_; r++) {
-        uint16_t* out = band_ + (size_t)r * srcW_ + x0;
+        volatile uint32_t* row = band_ + (size_t)r * bandStride_;
         const uint8_t* in = rgb + r * bw * 3;
-        for (int i = 0; i < bw; i++, in += 3) out[i] = (uint16_t)(((in[0] >> 3) << 11) | ((in[1] >> 2) << 5) | (in[2] >> 3));
+        for (int x = x0; x <= x1; x++, in += 3) {
+            const uint32_t p = ((in[0] >> 3) << 11) | ((in[1] >> 2) << 5) | (in[2] >> 3);
+            const uint32_t w = row[x >> 1];
+            row[x >> 1] = x & 1 ? (w & 0xFFFF) | p << 16 : (w & 0xFFFF0000) | p;
+        }
     }
 }
 
@@ -78,13 +102,13 @@ void ArtBuilder::flushBand() {
     if (bandY0_ < 0 || !band_) return;
     for (int r = 0; r < bandRows_; r++) {
         int cy = bandY0_ + r - cropY_;
-        if (cy >= 0 && cy < side_) sourceRow(band_ + (size_t)r * srcW_, cy);
+        if (cy >= 0 && cy < side_) sourceRow(band_ + (size_t)r * bandStride_, cy);
     }
     bandY0_ = -1;
 }
 
 // Box-filters a source row into the output columns and accumulates it into its output row.
-void ArtBuilder::sourceRow(const uint16_t* row, int cy) {
+void ArtBuilder::sourceRow(const volatile uint32_t* row, int cy) {
     uint32_t sums[ART_W * 3];
     uint16_t counts[ART_W];
     for (int tx = 0; tx < ART_W; tx++) {
@@ -92,7 +116,7 @@ void ArtBuilder::sourceRow(const uint16_t* row, int cy) {
         if (b <= a) b = a + 1;  // scaling up: nearest
         uint32_t r = 0, g = 0, bl = 0;
         for (int x = a; x < b; x++) {
-            uint16_t p = row[x];  // RGB565 back to 8 bits a channel
+            const uint32_t p = (row[x >> 1] >> ((x & 1) << 4)) & 0xFFFF;  // RGB565 back to 8 bits a channel
             r += ((p >> 11) << 3) | (p >> 13);
             g += (((p >> 5) & 63) << 2) | ((p >> 9) & 3);
             bl += ((p & 31) << 3) | ((p >> 2) & 7);

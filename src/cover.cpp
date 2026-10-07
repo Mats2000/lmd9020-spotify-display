@@ -1,5 +1,7 @@
 #include "cover.h"
 
+#include <new>
+
 // TJpgDec (via esp32-camera in the Arduino core): reads the HTTPS stream directly.
 #include "esp_jpg_decode.h"
 
@@ -90,15 +92,15 @@ bool fetchCover(const String& url, int imageWidth, const String& thumbUrl, int t
     if (imageWidth <= 0) imageWidth = 640;
     while (scale < 3 && (imageWidth >> (scale + 1)) >= ART_H) scale++;
 
-    // Allocate decode buffers before the download, while the heap is unfragmented.
-    ArtBuilder* builder = new ArtBuilder;
-    if (!builder) return false;
-    builder->reserve(imageWidth >> scale, 8);  // a band is at most 8 rows at these scales
-
     uint32_t started = millis();
     lowestHeap = UINT32_MAX;
     colours = thumbUrl.length() ? fetchCoverPalette(thumbUrl, thumbWidth, dst) : 0;
     uint32_t paletteMs = millis() - started;
+
+    // The decoder's buffers only now: RAM is tightest while connecting and fetching the thumbnail.
+    ArtBuilder* builder = new (std::nothrow) ArtBuilder;
+    if (!builder) return false;
+    builder->reserve(imageWidth >> scale, 8);  // a band is at most 8 rows at these scales
     started = millis();
     int code = https.request("GET", host.c_str(), path.c_str());
     uint32_t connected = millis();

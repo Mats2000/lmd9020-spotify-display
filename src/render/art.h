@@ -60,7 +60,8 @@ public:
 
 private:
     void flushBand();
-    void sourceRow(const uint16_t* row, int cy);
+    void sourceRow(const volatile uint32_t* row, int cy);
+    void allocBand(int rows, int w);
     void emitRow(int ty);
     void outputRow(int ty, const uint8_t* up, const uint8_t* mid, const uint8_t* down);
 
@@ -70,7 +71,10 @@ private:
     int colours_ = 0;
     int srcW_ = 0, srcH_ = 0, side_ = 0, cropX_ = 0, cropY_ = 0;
 
-    uint16_t* band_ = nullptr;  // band rows of srcW_ RGB565 pixels (16-bit: RAM is tight while decoding)
+    // Band rows of RGB565 pixels, two to a word and bandStride_ words a row. In IRAM when there's
+    // room (whole words only), since ordinary RAM is tight while the cover downloads.
+    volatile uint32_t* band_ = nullptr;
+    int bandStride_ = 0;
     int bandY0_ = -1, bandRows_ = 0, bandCap_ = 0, reservedW_ = 0;
 
     uint16_t colStart_[ART_W + 1];  // output column tx averages source columns [colStart_[tx], colStart_[tx+1])

@@ -46,7 +46,8 @@ void setPlaying(bool playing, bool paused) {
     xSemaphoreGive(lock);
 }
 
-void loadTrack(const Track& t) {
+// Shows the track and fetches its cover; false if the cover couldn't be had (a stand-in shows).
+bool loadTrack(const Track& t) {
     xSemaphoreTake(lock, portMAX_DELAY);
     copyUtf8(shared.title, t.title.c_str(), sizeof(shared.title));
     copyUtf8(shared.artist, t.artist.c_str(), sizeof(shared.artist));
@@ -84,6 +85,7 @@ void loadTrack(const Track& t) {
     shared.artColours = colours;
     shared.pal = pal;
     xSemaphoreGive(lock);
+    return ok;
 }
 
 bool placeholder(const char* s) { return strncmp(s, "PASTE", 5) == 0 || !s[0]; }
@@ -112,6 +114,8 @@ void netTask(void*) {
     spotify.begin();
 
     String currentKey;
+    int coverRetries = 0;  // left for the current track's cover, if it didn't come
+    uint32_t coverRetryAt = 0;
     uint32_t lastPlayingMs = 0;
     bool hasPlayed = false;
     bool reallyPlaying = false;
@@ -145,8 +149,14 @@ void netTask(void*) {
                 failures = 0;
                 setStatus("");
                 if (track.key != currentKey) {
-                    loadTrack(track);
+                    coverRetries = loadTrack(track) ? 0 : 3;
+                    coverRetryAt = millis() + 10000;
                     currentKey = track.key;
+                } else if (coverRetries > 0 && (int32_t)(millis() - coverRetryAt) >= 0) {
+                    // The cover didn't come: try again a little later, rather than for good.
+                    Serial.println("Trying the cover again");
+                    coverRetries = loadTrack(track) ? 0 : coverRetries - 1;
+                    coverRetryAt = millis() + 30000;
                 }
                 reallyPlaying = track.playing;
                 if (track.playing) {

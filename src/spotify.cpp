@@ -139,13 +139,7 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
         Serial.printf("Spotify currently-playing: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
         return SpotifyResult::NetError;
     }
-    String body;
-    if (!https.readString(body)) {
-        https.close();
-        return SpotifyResult::NetError;
-    }
-
-    // Keep only what the display uses.
+    // Keep only what the display uses, parsing as the reply arrives.
     JsonDocument filter;
     filter["is_playing"] = true;
     filter["item"]["uri"] = true;
@@ -158,9 +152,11 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
     filter["item"]["show"]["name"] = true;
 
     JsonDocument doc;
+    HttpsBodyReader body;
     DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
     if (err) {
         Serial.printf("Spotify JSON: %s\n", err.c_str());
+        https.close();
         return SpotifyResult::NetError;
     }
     JsonObjectConst item = doc["item"];

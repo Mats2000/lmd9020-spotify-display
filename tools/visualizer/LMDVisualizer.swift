@@ -16,7 +16,7 @@ let displayPort: UInt16 = 4210  // the display listens here and announces itself
 let bandCount = 16
 let fftSize = 2048
 let updatesPerSecond = 60.0
-let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Aurora", "Lava"]  // VizStyle order
+let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava"]  // VizStyle order
 
 // MARK: - Network
 

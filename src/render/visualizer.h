@@ -10,7 +10,6 @@ enum VizStyle {
     VIZ_GLOW,      // classic visualizer: loops swirling out in soft feedback trails
     VIZ_SPECTRUM,  // a 2000s receiver's fluorescent analyzer, split by the cover, peaks that hold
     VIZ_HALO,      // a glow breathing around the cover, rippling on each beat
-    VIZ_AURORA,    // curtains of light swaying behind the cover, rising with the music
     VIZ_LAVA,      // slow smooth colour waves, quicker and brighter with the music
     VIZ_COUNT,
 };

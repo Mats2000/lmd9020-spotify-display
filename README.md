@@ -197,7 +197,6 @@ firmware's own scene code, and picks the style:
   highs at the right): soft pills of ice-white phosphor behind dark glass, bars that move like
   a meter's needle, peaks that hold then fall away.
 - **Pulse Halo:** a glow breathing around the cover, rippling outward on each beat.
-- **Aurora:** curtains of light swaying behind the cover, rising and brightening with the music.
 - **Lava:** slow, smooth colour waves, quicker and brighter with the music.
 - **Off:** the card's normal solid background, even with the app running.
 

@@ -44,5 +44,28 @@ private:
 
 extern Https https;
 
+// The response body as an ArduinoJson reader: a reply is parsed as it arrives instead of
+// being held whole in RAM first (Spotify's are several KB, mostly lists of markets).
+class HttpsBodyReader {
+public:
+    int read() {
+        if (pos_ == len_) {
+            const int n = https.read(buf_, sizeof(buf_));
+            if (n <= 0) return -1;
+            pos_ = 0, len_ = n;
+        }
+        return buf_[pos_++];
+    }
+    size_t readBytes(char* out, size_t n) {
+        size_t got = 0;
+        for (int c; got < n && (c = read()) >= 0;) out[got++] = (char)c;
+        return got;
+    }
+
+private:
+    uint8_t buf_[128];
+    int pos_ = 0, len_ = 0;
+};
+
 // Splits "https://host/path" into its parts. False if it isn't one.
 bool splitUrl(const String& url, String& host, String& path);

@@ -24,7 +24,9 @@ int keepFor(float dt, float perSecond) { return (int)(256 * expf(-dt * perSecond
 
 // The frame on screen, zoomed out from the cover's centre, turned (radians), softened (blur
 // pulls the bilinear weights toward even: 0 sharp .. 7 soft) and kept at keep / 256. With
-// nothing to feed back from, black.
+// nothing to feed back from, black. Every other pixel across, on every other row, is sampled
+// and the rest blended from their neighbours: a quarter of the work, and no finer than the
+// soft trails, composite's width or interlace's blending of rows would show anyway.
 void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
     uint8_t** in = fed ? a.c.shown : nullptr;
     const float cs = cosf(turn) / zoom, sn = sinf(turn) / zoom;
@@ -32,20 +34,14 @@ void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
     // Pulling the weights toward even also moves the sample up to half a pixel on; start that
     // much earlier so the softening is centred and nothing drifts.
     const int32_t centre = (int32_t)(32768.0f * blur / (blur + 1));
-    for (int y = 0; y < a.bottom && y < Canvas::H; y++) {
-        uint8_t* out = a.c.rows[y];
-        const float v = y - a.cy;
-        int32_t xs = (int32_t)((a.cx - a.cx * cs - v * sn / K) * 65536) - centre;
-        int32_t ys = (int32_t)((a.cy - a.cx * sn * K + v * cs) * 65536) - centre;
-        const bool coverRow = y >= a.y0 && y < a.y1;
-        for (int x = 0; x < Canvas::W; x++, xs += stepX, ys += stepY) {
-            if (coverRow && x >= a.x0 && x < a.x1) continue;
-            int value = 0;
+    const int soft = 65536 / (blur + 1), softAt = 128 * blur * soft;  // w -> (w + 128 blur) / (blur + 1), x65536
+    const int bottom = a.bottom < Canvas::H ? a.bottom : Canvas::H;
+    auto sample = [&](int32_t xs, int32_t ys) {
             const int sx = xs >> 16, sy = ys >> 16;
-            if (in && sx >= 0 && sy >= 0 && sx < Canvas::W - 1 && sy < a.bottom - 1 &&
+            int value = 0;
+            if ((unsigned)sx < Canvas::W - 1 && (unsigned)sy < (unsigned)(bottom - 1) &&
                 (sy + 1 < a.y0 || sy >= a.y1 || sx + 1 < a.x0 || sx >= a.x1)) {
-                const int fx = (((xs >> 8) & 255) + 128 * blur) / (blur + 1);
-                const int fy = (((ys >> 8) & 255) + 128 * blur) / (blur + 1);
+                const int fx = (((xs >> 8) & 255) * soft + softAt) >> 16, fy = (((ys >> 8) & 255) * soft + softAt) >> 16;
                 const uint8_t* r0 = in[sy] + sx;
                 const uint8_t* r1 = in[sy + 1] + sx;
                 const int p00 = r0[0] < GLOW_LEVELS ? r0[0] : 0, p01 = r0[1] < GLOW_LEVELS ? r0[1] : 0;
@@ -53,9 +49,60 @@ void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
                 const int top = p00 * 256 + (p01 - p00) * fx, low = p10 * 256 + (p11 - p10) * fx;
                 value = ((top * 256 + (low - top) * fy) >> 16) * keep >> 8;
             }
-            out[x] = (uint8_t)value;
+            return value;
+    };
+    auto span = [&](uint8_t* out, int x0, int x1, int32_t xs, int32_t ys) {
+        if (x0 >= x1) return;
+        int prev = sample(xs, ys);
+        out[x0] = (uint8_t)prev;
+        int x = x0 + 2;
+        for (; x < x1; x += 2) {
+            const int next = sample(xs += 2 * stepX, ys += 2 * stepY);
+            out[x - 1] = (uint8_t)((prev + next) >> 1);
+            out[x] = (uint8_t)next;
+            prev = next;
         }
+        if (x == x1) out[x1 - 1] = (uint8_t)prev;
+    };
+    auto coverRow = [&](int y) { return y >= a.y0 && y < a.y1; };
+    // The stretches of row y off the cover: [from[i], to[i]) for i < the count returned.
+    auto spans = [&](int y, int* from, int* to) {
+        if (!coverRow(y)) return from[0] = 0, to[0] = Canvas::W, 1;
+        return from[0] = 0, to[0] = a.x0, from[1] = a.x1, to[1] = Canvas::W, 2;
+    };
+    int from[2], to[2];
+    if (!in) {
+        for (int y = 0; y < bottom; y++)
+            for (int i = 0, n = spans(y, from, to); i < n; i++) memset(a.c.rows[y] + from[i], 0, to[i] - from[i]);
+        return;
     }
+    auto sampleSpan = [&](int y, int x0, int x1) {
+        const float v = y - a.cy;
+        const int32_t xs = (int32_t)((a.cx - a.cx * cs - v * sn / K) * 65536) - centre + stepX * x0;
+        const int32_t ys = (int32_t)((a.cy - a.cx * sn * K + v * cs) * 65536) - centre + stepY * x0;
+        span(a.c.rows[y], x0, x1, xs, ys);
+    };
+    auto sampleRow = [&](int y) {
+        for (int i = 0, n = spans(y, from, to); i < n; i++) sampleSpan(y, from[i], to[i]);
+    };
+    // Odd rows between two sampled ones: their average, unless the cover is in the way.
+    auto blendRow = [&](int y) {
+        const uint8_t *up = a.c.rows[y - 1], *down = a.c.rows[y + 1];
+        uint8_t* out = a.c.rows[y];
+        for (int i = 0, n = spans(y, from, to); i < n; i++) {
+            const int x0 = from[i], x1 = to[i];
+            if (x1 > a.x0 && x0 < a.x1 && (coverRow(y - 1) || coverRow(y + 1))) {
+                sampleSpan(y, x0, x1);
+                continue;
+            }
+            for (int x = x0; x < x1; x++) out[x] = (uint8_t)((up[x] + down[x] + 1) >> 1);
+        }
+    };
+    for (int y = 0; y < bottom; y += 2) {
+        sampleRow(y);
+        if (y >= 2) blendRow(y - 1);
+    }
+    if (bottom % 2 == 0) sampleRow(bottom - 1);  // the last row has nothing below it
 }
 
 // The song line's strip at the darkest, and soft toward it and around the cover, so neither
@@ -63,17 +110,26 @@ void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
 void finish(Area& a) {
     for (int y = a.bottom; y < Canvas::H; y++) memset(a.c.rows[y], 0, Canvas::W);
     for (int y = a.bottom - 10 < 0 ? 0 : a.bottom - 10; y < a.bottom && y < Canvas::H; y++)
-        for (int x = 0; x < Canvas::W; x++)
-            if (a.c.rows[y][x] < GLOW_LEVELS) a.c.rows[y][x] = (uint8_t)(a.c.rows[y][x] * (a.bottom - y) / 10);
+        for (int x = 0, f = (a.bottom - y) * 256 / 10; x < Canvas::W; x++)
+            if (a.c.rows[y][x] < GLOW_LEVELS) a.c.rows[y][x] = (uint8_t)(a.c.rows[y][x] * f >> 8);
     constexpr int EDGE = 8;
-    for (int y = a.y0 - EDGE < 0 ? 0 : a.y0 - EDGE; y < a.y1 + EDGE && y < a.bottom; y++)
-        for (int x = a.x0 - EDGE < 0 ? 0 : a.x0 - EDGE; x < a.x1 + EDGE && x < Canvas::W; x++) {
-            int dist = a.x0 - x;
-            if (x - a.x1 + 1 > dist) dist = x - a.x1 + 1;
-            if (a.y0 - y > dist) dist = a.y0 - y;
-            if (y - a.y1 + 1 > dist) dist = y - a.y1 + 1;
-            if (dist > 0 && dist < EDGE && a.c.rows[y][x] < GLOW_LEVELS) a.c.rows[y][x] = (uint8_t)(a.c.rows[y][x] * dist / EDGE);
+    auto fade = [&](int x, int y) {
+        int dist = a.x0 - x;
+        if (x - a.x1 + 1 > dist) dist = x - a.x1 + 1;
+        if (a.y0 - y > dist) dist = a.y0 - y;
+        if (y - a.y1 + 1 > dist) dist = y - a.y1 + 1;
+        uint8_t& p = a.c.rows[y][x];
+        if (dist > 0 && dist < EDGE && p < GLOW_LEVELS) p = (uint8_t)(p * dist >> 3);  // EDGE is 8
+    };
+    const int left = a.x0 - EDGE < 0 ? 0 : a.x0 - EDGE, right = a.x1 + EDGE < Canvas::W ? a.x1 + EDGE : Canvas::W;
+    for (int y = a.y0 - EDGE < 0 ? 0 : a.y0 - EDGE; y < a.y1 + EDGE && y < a.bottom; y++) {
+        if (y >= a.y0 && y < a.y1) {  // beside the cover: just the two strips
+            for (int x = left; x < a.x0; x++) fade(x, y);
+            for (int x = a.x1; x < right; x++) fade(x, y);
+        } else {
+            for (int x = left; x < right; x++) fade(x, y);
         }
+    }
 }
 
 void add(Area& a, int x, int y, int s) {
@@ -88,6 +144,17 @@ void raise(Area& a, int x, int y, int v) {  // at least v
 }
 
 void dab(Area& a, int x, int y, int s) {  // a soft 3x3 brush
+    if (x >= 1 && x < Canvas::W - 1 && y >= 1 && y < a.bottom - 1 && y < Canvas::H - 1 &&
+        (x + 1 < a.x0 || x - 1 >= a.x1 || y + 1 < a.y0 || y - 1 >= a.y1)) {  // clear of the edges and the cover
+        for (int j = -1; j <= 1; j++) {
+            uint8_t* row = a.c.rows[y + j] + x;
+            for (int i = -1; i <= 1; i++) {
+                const int v = row[i] + (i && j ? s / 4 : (i || j ? s / 2 : s));
+                row[i] = (uint8_t)(v < TOP ? v : TOP);
+            }
+        }
+        return;
+    }
     add(a, x, y, s);
     add(a, x - 1, y, s / 2), add(a, x + 1, y, s / 2), add(a, x, y - 1, s / 2), add(a, x, y + 1, s / 2);
     add(a, x - 1, y - 1, s / 4), add(a, x + 1, y - 1, s / 4), add(a, x - 1, y + 1, s / 4), add(a, x + 1, y + 1, s / 4);
@@ -204,11 +271,23 @@ void spectrum(Area& a, float dt, const VizInput& in, VizState& s) {
     memset(a.c.rows[bot + 2] + right, GLOW_ARTIST + 1, WIDTH);
 }
 
+// Every pixel off the cover, row by row: f(x, y, out row).
+template <typename F>
+inline void offCover(Area& a, F f) {
+    for (int y = 0; y < a.bottom && y < Canvas::H; y++) {
+        uint8_t* out = a.c.rows[y];
+        if (y >= a.y0 && y < a.y1) {
+            for (int x = 0; x < a.x0; x++) f(x, y, out);
+            for (int x = a.x1; x < Canvas::W; x++) f(x, y, out);
+        } else {
+            for (int x = 0; x < Canvas::W; x++) f(x, y, out);
+        }
+    }
+}
+
 void halo(Area& a, uint32_t ms, const VizInput& in, VizState& s) {
     noteBeat(in, ms, s);
     const float reach = 22 + 50 * in.bass, strength = 120 + 110 * in.bass;
-    uint8_t fall[256];  // the glow by distance from the cover, in px
-    for (int d = 0; d < 256; d++) fall[d] = (uint8_t)(strength * expf(-d / reach));
     float rings[6], weight[6];
     int n = 0;
     for (int i = 0; i < 6; i++) {
@@ -216,72 +295,53 @@ void halo(Area& a, uint32_t ms, const VizInput& in, VizState& s) {
         if (!s.beats[i] || age > 1600) continue;
         rings[n] = 8 + age * 0.12f, weight[n++] = 190 * (1 - age / 1600.0f);
     }
-    for (int y = 0; y < a.bottom; y++) {
-        uint8_t* out = a.c.rows[y];
-        const float dy = y < a.y0 ? a.y0 - y : (y >= a.y1 ? y - a.y1 + 1 : 0);
-        for (int x = 0; x < Canvas::W; x++) {
-            if (a.cover(x, y)) continue;
-            const float dx = (x < a.x0 ? a.x0 - x : (x >= a.x1 ? x - a.x1 + 1 : 0)) * K;
-            const float d = sqrtf(dx * dx + dy * dy);
-            float v = fall[d < 255 ? (int)d : 255];
-            for (int i = 0; i < n; i++) {
-                const float off = fabsf(d - rings[i]);
-                if (off < 4.5f) v += weight[i] * (1 - off / 4.5f);
-            }
-            out[x] = (uint8_t)(v < TOP ? v : TOP);
+    // The glow by distance from the cover, rings and all, in half pixels.
+    uint8_t glow[512];
+    for (int h = 0; h < 512; h++) {
+        const float d = h * 0.5f;
+        float v = strength * expf(-d / reach);
+        for (int i = 0; i < n; i++) {
+            const float off = fabsf(d - rings[i]);
+            if (off < 4.5f) v += weight[i] * (1 - off / 4.5f);
         }
+        glow[h] = (uint8_t)(v < TOP ? v : TOP);
     }
-}
-
-// Curtains of light: three wavy lower edges with light rising from each, brighter where the
-// band under that part of the screen is loud (lows at the middle, highs out to the sides), and
-// fine folds shimmering along them.
-void aurora(Area& a, float dt, const VizInput& in, VizState& s) {
-    feedback(a, s.fed, 1.0f, 0.0f, keepFor(dt, 5.0f), 4);  // a soft persistence
-    s.phase += dt * (0.25f + 0.6f * in.mid);
-    if (s.phase > 6283.0f) s.phase -= 6283.0f;
-    for (int curtain = 0; curtain < 3; curtain++) {
-        const float reach = 16 + 42 * in.bass + 8 * curtain;
-        uint8_t rise[256];  // light above the edge, by distance (in quarters of `reach`, x4 below)
-        for (int d = 0; d < 256; d++) rise[d] = (uint8_t)(255 * expf(-d / 64.0f));
-        for (int x = 0; x < Canvas::W; x++) {
-            const float at = fabsf(x - a.cx) / (Canvas::W * 0.5f) * 14.99f;  // between bands, not in steps
-            const int b0 = (int)at;
-            const float band = (in.band[b0] + (in.band[b0 + 1] - in.band[b0]) * (at - b0)) / 255.0f;
-            const float edge = a.y1 - 18 - curtain * 36 + 16 * fastSin(x * K * 0.019f + s.phase * (1 + 0.3f * curtain) + curtain * 2.1f) +
-                               6 * fastSin(x * K * 0.051f - s.phase * 1.7f);
-            // Light rises further in some places than others, so the top edge is ragged.
-            const float tall = reach * (0.75f + 0.25f * fastSin(x * K * 0.043f + s.phase * 1.1f + curtain * 2.0f));
-            const float folds = 0.88f + 0.12f * fastSin(x * 0.19f + s.phase * 4.0f + curtain * 1.3f);
-            const float bright = (70 + 140 * band + 30 * in.beat) * folds;
-            const int yEdge = (int)edge, span = (int)(tall * 3);
-            const float perRow = 64.0f / tall;
-            for (int y = yEdge - span; y <= yEdge + 2; y++) {
-                const int d = yEdge - y;
-                const int q = (int)(d * perRow);
-                const float v = d >= 0 ? bright * rise[q < 255 ? q : 255] / 255 : bright * (1 + d / 3.0f);
-                if (v > 4) raise(a, x, y, (int)v);
+    // Distance (half pixels) by how far across from the cover, for the current row's distance
+    // down: square roots only for the few rows above and below it.
+    constexpr int ACROSS = 128;
+    uint16_t dist[ACROSS];
+    int distFor = -1;
+    offCover(a, [&](int x, int y, uint8_t* out) {
+        const int dy = y < a.y0 ? a.y0 - y : (y >= a.y1 ? y - a.y1 + 1 : 0);
+        if (dy != distFor) {
+            for (int dx = 0; dx < ACROSS; dx++) {
+                const float across = dx * K, d = dy ? sqrtf(across * across + dy * dy) : across;
+                dist[dx] = (uint16_t)(d * 2 < 511 ? d * 2 : 511);
             }
+            distFor = dy;
         }
-    }
+        int dx = x < a.x0 ? a.x0 - x : (x >= a.x1 ? x - a.x1 + 1 : 0);
+        if (dx >= ACROSS) dx = ACROSS - 1;
+        out[x] = glow[dist[dx]];
+    });
 }
 
 void lava(Area& a, float dt, const VizInput& in, VizState& s) {
     s.phase += dt * (0.25f + 1.6f * in.bass + 0.6f * in.mid);
     if (s.phase > 6283.0f) s.phase -= 6283.0f;
     const float contrast = 0.7f + 0.5f * in.mid, lift = 30 * in.beat + 20 * in.bass;
-    int8_t across[Canvas::W];
-    for (int x = 0; x < Canvas::W; x++) across[x] = (int8_t)(127 * fastSin(x * K * 0.028f + s.phase));
-    for (int y = 0; y < a.bottom; y++) {
-        uint8_t* out = a.c.rows[y];
-        const float down = 40 * fastSin(y * 0.042f - s.phase * 0.8f);
-        for (int x = 0; x < Canvas::W; x++) {
-            if (a.cover(x, y)) continue;
-            const float diag = 40 * fastSin((x * K + y) * 0.031f + s.phase * 1.3f);
-            const float v = 105 + lift + contrast * (across[x] * (45.0f / 127) + down + diag);
-            out[x] = (uint8_t)(v < 0 ? 0 : (v > TOP ? TOP : v));
-        }
-    }
+    // Three waves, across, down and diagonal; the first and last tabled for the frame (the
+    // diagonal by x * K + y), already scaled, so a pixel is two lookups and an add.
+    constexpr int KQ = (int)(K * 256), DIAGONAL = (Canvas::W * KQ >> 8) + Canvas::H + 1;
+    int8_t across[Canvas::W], diag[DIAGONAL];
+    for (int x = 0; x < Canvas::W; x++) across[x] = (int8_t)(contrast * 45 * fastSin(x * K * 0.028f + s.phase));
+    for (int i = 0; i < DIAGONAL; i++) diag[i] = (int8_t)(contrast * 40 * fastSin(i * 0.031f + s.phase * 1.3f));
+    int base = 0, baseFor = -1;
+    offCover(a, [&](int x, int y, uint8_t* out) {
+        if (y != baseFor) base = (int)(105 + lift + contrast * 40 * fastSin(y * 0.042f - s.phase * 0.8f)), baseFor = y;
+        const int v = base + across[x] + diag[(x * KQ >> 8) + y];
+        out[x] = (uint8_t)(v < 0 ? 0 : (v > TOP ? TOP : v));
+    });
 }
 
 }  // namespace
@@ -293,7 +353,6 @@ void drawVisualizer(int style, Canvas& c, int x0, int y0, int x1, int y1, int bo
     switch (style) {
         case VIZ_SPECTRUM: spectrum(a, dt, in, s); break;
         case VIZ_HALO: halo(a, ms, in, s); break;
-        case VIZ_AURORA: aurora(a, dt, in, s); break;
         case VIZ_LAVA: lava(a, dt, in, s); break;
         default: glow(a, dt, in, s); break;
     }
