@@ -232,7 +232,7 @@ things fight it:
   minute. The clock roams ±10 × ±6 px. The periods share no factors, so the
   path wanders over the whole area instead of retracing.
 - **TV snow.** Full-screen snow swings every pixel between black and white,
-  which clears a held image: for 15 seconds when the music stops, for the
+  which clears a held image: for 10 seconds when the music stops, for the
   last minute before sleep, and for 30 minutes when you press the board's
   **BOOT** button (press again to stop; it also wakes the display). Times are
   `REFRESH_*` in `include/config.h`.

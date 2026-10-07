@@ -72,7 +72,7 @@
 // Full-screen TV snow keeps the LCD from holding an image (ghosting): this long after the
 // music stops, for the last minute(s) before sleep, and for a while when the board's BOOT
 // button is pressed (press again to stop).
-#define REFRESH_AFTER_MUSIC_SECONDS 15
+#define REFRESH_AFTER_MUSIC_SECONDS 10
 #define REFRESH_BEFORE_SLEEP_MINUTES 1
 #define REFRESH_BUTTON_MINUTES 30
 
