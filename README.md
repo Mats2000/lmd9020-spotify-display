@@ -248,8 +248,8 @@ After `SLEEP_AFTER_MINUTES` (20) with nothing playing on Spotify, the
 picture fades out over 3 seconds and the ESP32 powers down its DAC, so the
 BNC line sits at 0 V with no sync. The monitor treats that as no input;
 whether it then shows "no signal" or goes into standby is up to its own
-settings. While asleep it also stops making video, slows its CPU to 80 MHz
-and lets Wi-Fi doze between beacons. It keeps polling Spotify, and when
+settings. While asleep it also stops making video and lets Wi-Fi doze
+between beacons. It keeps polling Spotify, and when
 playback starts it powers the signal back up and fades in, usually within
 5 to 7 seconds. Set
 `SLEEP_AFTER_MINUTES 0` to never sleep.

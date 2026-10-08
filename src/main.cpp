@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <ESP_8_BIT_composite.h>
 #include <WiFi.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -28,10 +30,41 @@ static uint32_t buttonSnowUntil = 0;
 
 static const int BOOT_BUTTON = 0;
 
+// A stuck main loop (a driver call that never returns, video that doesn't come back) would
+// leave the display dark for good while Wi-Fi carries on regardless. If the loop hasn't come
+// round for LOOP_STALL_MS, restart; what it was doing is kept in RTC memory, which a restart
+// leaves alone, for the next boot's log.
+static const uint32_t LOOP_STALL_MS = 15000;
+enum Stage : uint32_t { STAGE_LOOP, STAGE_SLEEPING, STAGE_WAKING, STAGE_DRAWING, STAGE_FRAME, STAGE_COUNT };
+static const char* const STAGE_NAMES[STAGE_COUNT] = {"going round", "going to sleep", "waking up", "drawing",
+                                                     "waiting for the video frame"};
+static volatile uint32_t loopBeat, stage;
+RTC_NOINIT_ATTR static uint32_t stallMagic, stallStage;
+static const uint32_t STALL_MAGIC = 0x57A11EDu;
+
+static void checkLoop(void*) {
+    if (millis() - loopBeat < LOOP_STALL_MS) return;
+    stallMagic = STALL_MAGIC;
+    stallStage = stage;
+    esp_restart();
+}
+
+static void reportLastReset() {
+    const esp_reset_reason_t why = esp_reset_reason();
+    if (why == ESP_RST_SW && stallMagic == STALL_MAGIC && stallStage < STAGE_COUNT)
+        Serial.printf("Restarted: the main loop stalled while %s\n", STAGE_NAMES[stallStage]);
+    else if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT)
+        Serial.printf("Restarted after a crash or watchdog (reason %d)\n", (int)why);
+    else if (why == ESP_RST_BROWNOUT)
+        Serial.println("Restarted after a brownout: check the power supply");
+    stallMagic = 0;
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.printf("\nLMD-9020 Spotify display (%s). Free heap %u\n", VIDEO_NTSC ? "NTSC" : "PAL",
                   ESP.getFreeHeap());
+    reportLastReset();
 
     // Must run on the loop() task: the library notifies the task that called begin().
     ESP_8_BIT_composite::setColor(NTSC_SATURATION, NTSC_HUE);
@@ -49,6 +82,11 @@ void setup() {
     pinMode(BOOT_BUTTON, INPUT_PULLUP);
     netStart(&scene);
     lastActiveMs = millis();
+
+    loopBeat = millis();
+    const esp_timer_create_args_t check = {checkLoop, nullptr, ESP_TIMER_TASK, "loop check"};
+    esp_timer_handle_t timer;
+    if (esp_timer_create(&check, &timer) == ESP_OK) esp_timer_start_periodic(timer, 1000000);
 }
 
 // The BOOT button starts (or stops) a panel refresh, and wakes the display.
@@ -118,9 +156,10 @@ static void showGlowPalette(const GlowRegion& g) {
 }
 
 // Sleep: after SLEEP_AFTER_MINUTES with nothing playing, fade out and power down
-// the DAC so the monitor sees no input. With nothing to make, the video stops too, the CPU
-// slows to 80 MHz and the radio dozes between beacons; Spotify is still asked every
-// POLL_IDLE_MS, so playing again wakes it as before. Returns true while the signal is off.
+// the DAC so the monitor sees no input. With nothing to make, the video stops too and the
+// radio dozes between beacons; Spotify is still asked every POLL_IDLE_MS, so playing again
+// wakes it as before. (The CPU stays at 240 MHz: switching its clock at run time can hang, and
+// with the video stopped it idles anyway.) Returns true while the signal is off.
 static bool handleSleep() {
     if (np.playing) lastActiveMs = millis();
     const uint32_t sleepMs = SLEEP_AFTER_MINUTES * 60000UL, idleMs = millis() - lastActiveMs;
@@ -130,14 +169,14 @@ static bool handleSleep() {
     scene.setAwake(!sleepy);
 
     if (sleepy && scene.dark() && !signalOff) {
+        stage = STAGE_SLEEPING;
         dac_output_disable(VIDEO_DAC);
         ESP_8_BIT_composite::pause();
         WiFi.setSleep(true);
-        setCpuFrequencyMhz(80);
         signalOff = true;
-        Serial.println("Nothing played for a while: video signal off, CPU at 80 MHz, Wi-Fi dozing");
+        Serial.println("Nothing played for a while: video signal off, Wi-Fi dozing");
     } else if (!sleepy && signalOff) {
-        setCpuFrequencyMhz(240);
+        stage = STAGE_WAKING;
 #if VISUALIZER
         WiFi.setSleep(false);  // as netTask set it: the visualizer's packets arrive as sent
 #endif
@@ -150,6 +189,8 @@ static bool handleSleep() {
 }
 
 void loop() {
+    loopBeat = millis();
+    stage = STAGE_LOOP;
     netSnapshot(np);
     pollButton();
     if (handleSleep()) {
@@ -173,6 +214,7 @@ void loop() {
     Canvas canvas{video.getFrameBufferLines()};
     canvas.shown = video.getDisplayedFrameBufferLines();
     uint32_t start = micros();
+    stage = STAGE_DRAWING;
     scene.render(canvas, np, clock, millis());
     showCoverPalette(scene.coverRegion());
     showGlowPalette(scene.glowRegion());
@@ -195,6 +237,7 @@ void loop() {
     }
 
     // Hold each frame for two fields: 30 fps (motion is time-based).
+    stage = STAGE_FRAME;
     while (video.getRenderedFrameCount() == lastSwapField) vTaskDelay(1);
     video.waitForFrame();
     lastSwapField = video.getRenderedFrameCount();
