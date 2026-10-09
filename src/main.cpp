@@ -31,40 +31,56 @@ static uint32_t buttonSnowUntil = 0;
 static const int BOOT_BUTTON = 0;
 
 // A stuck main loop (a driver call that never returns, video that doesn't come back) would
-// leave the display dark for good while Wi-Fi carries on regardless. If the loop hasn't come
-// round for LOOP_STALL_MS, restart; what it was doing is kept in RTC memory, which a restart
-// leaves alone, for the next boot's log.
-static const uint32_t LOOP_STALL_MS = 15000;
+// leave the display dark for good while Wi-Fi carries on regardless; a stuck or cut-off network
+// task would leave it asleep for good with the music playing. Either way, restart: if the loop
+// hasn't come round for LOOP_STALL_MS, the network task for NET_STALL_MS, or Spotify hasn't
+// answered for NET_SILENT_MS. Why, and whether the display was asleep, is kept in RTC memory,
+// which a restart leaves alone: the next boot logs it and, if asleep, stays dark.
+static const uint32_t LOOP_STALL_MS = 15000, NET_STALL_MS = 180000, NET_SILENT_MS = 600000;
 enum Stage : uint32_t { STAGE_LOOP, STAGE_SLEEPING, STAGE_WAKING, STAGE_DRAWING, STAGE_FRAME, STAGE_COUNT };
 static const char* const STAGE_NAMES[STAGE_COUNT] = {"going round", "going to sleep", "waking up", "drawing",
                                                      "waiting for the video frame"};
+static const uint32_t NET_STUCK = 100, NET_SILENT = 101;  // stallStage values past the loop's own
 static volatile uint32_t loopBeat, stage;
-RTC_NOINIT_ATTR static uint32_t stallMagic, stallStage;
+RTC_NOINIT_ATTR static uint32_t stallMagic, stallStage, stallAsleep;
 static const uint32_t STALL_MAGIC = 0x57A11EDu;
 
-static void checkLoop(void*) {
-    if (millis() - loopBeat < LOOP_STALL_MS) return;
+static void restartFor(uint32_t why) {
     stallMagic = STALL_MAGIC;
-    stallStage = stage;
+    stallStage = why;
+    stallAsleep = signalOff;
     esp_restart();
 }
 
-static void reportLastReset() {
+static void checkLoop(void*) {
+    if (millis() - loopBeat >= LOOP_STALL_MS) restartFor(stage);
+    if (netSinceBeat() >= NET_STALL_MS) restartFor(NET_STUCK);
+    if (netSinceSpotify() >= NET_SILENT_MS) restartFor(NET_SILENT);
+}
+
+// Logs why the last restart happened; true if it was ours and the display was asleep then.
+static bool reportLastReset() {
     const esp_reset_reason_t why = esp_reset_reason();
-    if (why == ESP_RST_SW && stallMagic == STALL_MAGIC && stallStage < STAGE_COUNT)
+    const bool ours = why == ESP_RST_SW && stallMagic == STALL_MAGIC;
+    stallMagic = 0;
+    if (ours && stallStage < STAGE_COUNT)
         Serial.printf("Restarted: the main loop stalled while %s\n", STAGE_NAMES[stallStage]);
+    else if (ours && stallStage == NET_STUCK)
+        Serial.println("Restarted: the network task stalled");
+    else if (ours && stallStage == NET_SILENT)
+        Serial.println("Restarted: Spotify hadn't answered for 10 minutes");
     else if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT)
         Serial.printf("Restarted after a crash or watchdog (reason %d)\n", (int)why);
     else if (why == ESP_RST_BROWNOUT)
         Serial.println("Restarted after a brownout: check the power supply");
-    stallMagic = 0;
+    return ours && stallAsleep;
 }
 
 void setup() {
     Serial.begin(115200);
     Serial.printf("\nLMD-9020 Spotify display (%s). Free heap %u\n", VIDEO_NTSC ? "NTSC" : "PAL",
                   ESP.getFreeHeap());
-    reportLastReset();
+    const bool stayAsleep = reportLastReset();
 
     // Must run on the loop() task: the library notifies the task that called begin().
     ESP_8_BIT_composite::setColor(NTSC_SATURATION, NTSC_HUE);
@@ -82,6 +98,12 @@ void setup() {
     pinMode(BOOT_BUTTON, INPUT_PULLUP);
     netStart(&scene);
     lastActiveMs = millis();
+    if (stayAsleep) {  // the watchdog restarted it while asleep: stay dark until something plays
+        lastActiveMs = millis() - SLEEP_AFTER_MINUTES * 60000UL;
+        dac_output_disable(VIDEO_DAC);
+        ESP_8_BIT_composite::pause();
+        signalOff = true;
+    }
 
     loopBeat = millis();
     const esp_timer_create_args_t check = {checkLoop, nullptr, ESP_TIMER_TASK, "loop check"};
@@ -157,9 +179,9 @@ static void showGlowPalette(const GlowRegion& g) {
 
 // Sleep: after SLEEP_AFTER_MINUTES with nothing playing, fade out and power down
 // the DAC so the monitor sees no input. With nothing to make, the video stops too and the
-// radio dozes between beacons; Spotify is still asked every POLL_IDLE_MS, so playing again
-// wakes it as before. (The CPU stays at 240 MHz: switching its clock at run time can hang, and
-// with the video stopped it idles anyway.) Returns true while the signal is off.
+// Wi-Fi stays fully awake: Spotify is still asked every POLL_IDLE_MS, so playing again wakes it.
+// (Letting the radio doze, or switching the CPU clock, saved a little but after hours left it
+// unable to reach Spotify, or hung.) Returns true while the signal is off.
 static bool handleSleep() {
     if (np.playing) lastActiveMs = millis();
     const uint32_t sleepMs = SLEEP_AFTER_MINUTES * 60000UL, idleMs = millis() - lastActiveMs;
@@ -172,14 +194,10 @@ static bool handleSleep() {
         stage = STAGE_SLEEPING;
         dac_output_disable(VIDEO_DAC);
         ESP_8_BIT_composite::pause();
-        WiFi.setSleep(true);
         signalOff = true;
-        Serial.println("Nothing played for a while: video signal off, Wi-Fi dozing");
+        Serial.println("Nothing played for a while: video signal off");
     } else if (!sleepy && signalOff) {
         stage = STAGE_WAKING;
-#if VISUALIZER
-        WiFi.setSleep(false);  // as netTask set it: the visualizer's packets arrive as sent
-#endif
         ESP_8_BIT_composite::resume();
         dac_output_enable(VIDEO_DAC);
         signalOff = false;

@@ -7,3 +7,8 @@ void netStart(const Scene* scene);
 
 // Copies the latest state for the render loop. Cheap enough for every frame.
 void netSnapshot(NowPlaying& out);
+
+// For the watchdog: ms since the network task last went round its loop, and since Spotify last
+// answered (playing or not).
+uint32_t netSinceBeat();
+uint32_t netSinceSpotify();

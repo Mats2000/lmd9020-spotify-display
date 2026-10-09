@@ -90,7 +90,10 @@ bool loadTrack(const Track& t) {
 
 bool placeholder(const char* s) { return strncmp(s, "PASTE", 5) == 0 || !s[0]; }
 
+volatile uint32_t beatMs, spotifyMs;  // see netSinceBeat(), netSinceSpotify()
+
 void netTask(void*) {
+    beatMs = spotifyMs = millis();
     WiFi.mode(WIFI_STA);
 #if VISUALIZER
     WiFi.setSleep(false);  // in power save, packets would arrive in bursts at each beacon
@@ -122,6 +125,7 @@ void netTask(void*) {
     int failures = 0;
 
     for (;;) {
+        beatMs = millis();
         if (WiFi.status() != WL_CONNECTED) {
             setStatus("Connecting to Wi-Fi “%s”…", WIFI_SSID);
             setPlaying(false, true);
@@ -144,6 +148,7 @@ void netTask(void*) {
         uint32_t retryMs = 0;
         uint32_t wait = POLL_IDLE_MS;
         SpotifyResult r = spotify.current(track, retryMs);
+        if (r != SpotifyResult::NetError) spotifyMs = millis();  // it answered, whatever it said
         switch (r) {
             case SpotifyResult::Item:
                 failures = 0;
@@ -267,6 +272,9 @@ void netStart(const Scene* s) {
     xTaskCreatePinnedToCore(vizTask, "viz", 2304, nullptr, 1, nullptr, 0);
 #endif
 }
+
+uint32_t netSinceBeat() { return millis() - beatMs; }
+uint32_t netSinceSpotify() { return millis() - spotifyMs; }
 
 void netSnapshot(NowPlaying& out) {
     xSemaphoreTake(lock, portMAX_DELAY);
