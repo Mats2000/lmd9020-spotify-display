@@ -47,6 +47,10 @@ final class Analyzer {
     // it (capture clock, see Sync.now), and the beat's period in seconds once the tempo is sure (else 0).
     var onKick: ((_ strength: Float, _ played: Double, _ period: Double) -> Void)?
     private var sampleTime = 0.0  // when the sample being looked at was played
+    // Kicks, snares and hats by the learned model (Drums.swift); the kick code below then only keeps
+    // the tempo.
+    private let drums = Drums()
+    private let learned = DrumModel.current != nil
 
     var style: UInt8 {  // the visualizer the display should draw
         get { lock.lock(); defer { lock.unlock() }; return chosen }
@@ -65,6 +69,16 @@ final class Analyzer {
         self.send = send
         setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))!
         vDSP_hann_window(&window, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+        drums.onHit = { [weak self] kind, strength, at in
+            guard let self else { return }
+            switch kind {
+            case .kick:
+                self.beat = 1
+                self.onKick?(strength, at, self.tempoSure ? self.beatPeriod : 0)
+            case .snare: self.onAccent?(strength)
+            case .hat: self.onAccent?(strength * 0.6)
+            }
+        }
     }
 
     // The latest reading (silence once the audio stops).
@@ -185,8 +199,10 @@ final class Analyzer {
             sinceKick = 0
             beat = 1
             // Its start: the armed slices and the 5 ms average back.
-            onKick?(min(1, sqrtf(armedEnergy / max(kickLevel, 1e-9)) * 0.8) * min(1, 0.55 + armedBest / 40),
-                    sampleTime - 6 * slice, tempoSure ? beatPeriod : 0)
+            if !learned {
+                onKick?(min(1, sqrtf(armedEnergy / max(kickLevel, 1e-9)) * 0.8) * min(1, 0.55 + armedBest / 40),
+                        sampleTime - 6 * slice, tempoSure ? beatPeriod : 0)
+            }
             return
         }
         kickLevel *= Float(exp(-slice / 8))  // forgets slowly, so a quieter section is still heard
@@ -199,7 +215,7 @@ final class Analyzer {
             armedEnergy = lowE
         } else if sinceAccent > 0.07 && sinceKick > 0.03 && topRise > 9 && topE > topPeak * 0.2 && topE > 1e-8 {
             sinceAccent = 0
-            onAccent?(min(1, sqrtf(topE / topPeak)))
+            if !learned { onAccent?(min(1, sqrtf(topE / topPeak))) }
         }
     }
 
@@ -251,6 +267,7 @@ final class Analyzer {
 
     // played: when the first sample was played (capture clock).
     func push(_ samples: [Float], rate: Double, played: Double) {
+        if learned { drums.push(samples, rate: rate, played: played) }
         sampleRate = rate
         let hop = Int(rate / updatesPerSecond)
         sampleTime = played

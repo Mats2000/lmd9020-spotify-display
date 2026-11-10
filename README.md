@@ -284,10 +284,16 @@ and as `relaySecret` in the app's defaults, beside `relayURL`. `site/deploy.sh` 
 fonts and icon in and deploys. The page only works while the Mac is awake with Show Control
 running. A tap takes about 0.4 s there and back.
 
-**Kicks drive everything:** they're found on the raw samples in the kick drum's own band
-(30-150 Hz) as sharp rises over a 5 ms average, against the tempo found from the last four
-seconds, so offbeat bass notes and noise don't count; snares and hats come through separately as
-accents (extra sparkle, never the pulse). Every sound is timed by when Spotify played it (the
+**Kicks drive everything:** they're found by a small model learned from real songs
+(`tools/showcontrol/Drums.swift` and `DrumModel.swift`; how it's made is in
+`tools/showcontrol/drums/README.md`). Every 2.7 ms the newest sound is measured in nine bands
+(energy, rises over 11 and 32 ms, level against the band's recent peak and the track's loudness),
+and the last six steps' measurements give the chance a kick, snare or hat just started. It was
+trained against answer keys made offline from the drums Demucs separates out of recordings of
+songs played here. On four minutes of songs it hadn't seen, it found 81% of the kicks with 87% of
+its finds right, about 2 ms after each started; the earlier hand-made detector found 30%, 36% right,
+17 ms after. Snares and hats come through as accents (extra sparkle, never the pulse). The earlier
+detector still runs for the tempo the bulb's guesses use. Every sound is timed by when Spotify played it (the
 capture's own timestamps), so a light flashes when the kick is *heard*: after the speakers' delay
 (Core Audio's figure plus "In time with the speakers"), less the light's own delay (30 ms for a
 Govee lamp, half the measured round trip for a Matter light). A light too slow for that (a Matter
