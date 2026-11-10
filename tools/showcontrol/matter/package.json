@@ -1,0 +1,11 @@
+{
+  "name": "show-control-matter",
+  "private": true,
+  "type": "module",
+  "description": "Show Control's Matter side: pairs Matter lights (as an extra controller) and drives them for the app.",
+  "dependencies": {
+    "@project-chip/matter.js": "0.18.0",
+    "@matter/main": "0.18.0",
+    "@matter/nodejs": "0.18.0"
+  }
+}

@@ -20,7 +20,7 @@ struct NowPlaying {
     int artColours = 0;             // > 0: art indexes its own palette instead (see buildArtPalette)
     ScenePalette pal = defaultPalette();
     char status[72] = "";          // shown on the screensaver while something needs attention
-    struct Audio {                 // from tools/visualizer on the Mac, when it's running
+    struct Audio {                 // from tools/showcontrol on the Mac, when it's running
         uint8_t band[16] = {};     // 0..255, low to high
         uint8_t level = 0, beat = 0;
         uint8_t style = 0;         // a VizStyle, chosen in the app

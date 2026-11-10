@@ -83,7 +83,7 @@
 
 // ---- Visualizer ------------------------------------------------------------
 
-// tools/visualizer on the Mac listens to Spotify there and sends the music's frequency bands
+// tools/showcontrol on the Mac listens to Spotify there and sends the music's frequency bands
 // here over Wi-Fi; the card then glows to the music behind the cover. With nothing arriving
 // (helper not running, Spotify playing elsewhere) the card keeps its solid background.
 #define VISUALIZER 1

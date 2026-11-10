@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>LMD Visualizer</string>
+	<string>Show Control</string>
 	<key>CFBundleDisplayName</key>
-	<string>LMD Visualizer</string>
+	<string>Show Control</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.sentiainstruments.lmd-visualizer</string>
 	<key>CFBundleExecutable</key>
-	<string>LMD Visualizer</string>
+	<string>Show Control</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -27,8 +27,8 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>LMD Visualizer asks Spotify for the song and cover, so its preview matches the display.</string>
+	<string>Show Control asks Spotify for the song and cover, for the display and the lights.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>LMD Visualizer sends the music's levels to your LMD-9020 display on this network.</string>
+	<string>Show Control sends the music to your display and lights on this network.</string>
 </dict>
 </plist>

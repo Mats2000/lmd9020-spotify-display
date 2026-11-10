@@ -198,7 +198,7 @@ aspect. Use `--cover some.jpg --title "…"
 
 ## Visualizer
 
-When Spotify plays on your Mac, the **LMD Visualizer** app there listens to it and sends the
+When Spotify plays on your Mac, **Show Control by Sentia** (the home's lighting desk) listens to it and sends the
 music's frequency bands to the display, which then animates the background behind the cover
 to the music, through a palette of its own in the cover's colours so it stays smooth on
 composite. When the app isn't running, or Spotify plays somewhere else, the card blends back
@@ -225,22 +225,38 @@ firmware's own scene code, and picks the style:
 
 **Shuffle** in the style menu picks a new style with every song and every minute.
 
-**Govee lights** (a checkbox in the app) brings Govee lamps along, from the same analysis as the
-display, not a microphone: each bar the lamp takes the next of three colours (the cover's own,
-or the chosen scheme's), its brightness follows the loudness and every kick flashes it. Turn on
-**LAN Control** for the lamp in the Govee Home app; the app finds it on the network by itself.
-Ten seconds after the music stops, or when the box is unticked or the app quits, each lamp goes
-back to its own colour and brightness.
-
 Next to the style, the app picks the colours, for every style: **Cover Colours** (up to three
 of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** (deep purple,
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 - **Off:** the card's normal solid background, even with the app running.
 
+### Lamps
+
+The **Lamps** page brings lights along from the same analysis as the display, not a microphone.
+A **look** sets how they move: a movement (Flow, Twinkle, Flexing, Stacking, Strike, Gradient,
+Chase, Pulse), colours (its own, the cover's or the display's scheme, in order or at random),
+spots and size (ranges, wider with louder music), speed, rhythm (brightness from quiet to the
+beat) and direction. Looks are saved as presets (in `~/Library/Application Support/Show Control`).
+
+- **Govee** lamps are streamed a colour per segment (all 14 on the H6076). Turn on **LAN Control**
+  for the lamp in the Govee Home app; the app finds it by itself.
+- **Matter** lights (bulbs already in Alexa or Apple Home) follow the bars and flash on kicks,
+  through `tools/showcontrol/matter` (needs Node): `npm install` there once, then pair each light
+  with the code from its home app's "share" or "add another controller":
+  `node lights.js pair 01234567890 bulb`. The app runs the helper itself.
+
+Ten seconds after the music stops, or when the lamps are switched off or the app quits, every
+light goes back to its own colour and brightness.
+
+**Timing:** the music is captured before it reaches the speakers, so kicks are found on the raw
+samples (the bass, every 1.3 ms) and sent at once, and every output is held back by the speakers'
+own delay (read from Core Audio; Bluetooth adds a lot) less its own, so the light lands with the
+sound. "In time with the speakers" on the Display page trims it by ear.
+
 ```sh
-.venv/bin/python tools/visualizer/make_icon.py   # only after changing the icon
-tools/visualizer/build.sh                        # builds tools/visualizer/build/LMD Visualizer.app
-cp -R "tools/visualizer/build/LMD Visualizer.app" /Applications/
+.venv/bin/python tools/showcontrol/make_icon.py   # only after changing the icon
+tools/showcontrol/build.sh                        # builds tools/showcontrol/build/Show Control.app
+cp -R "tools/showcontrol/build/Show Control.app" /Applications/
 ```
 
 The first time, macOS asks to allow screen and system audio recording (that's how one app's
@@ -249,7 +265,7 @@ playing, and for the song and cover in the preview) and access to devices on the
 It only records while Spotify plays, so the menu bar's recording indicator goes away about ten
 seconds after the music stops (and never shows with the style set to Off). After allowing recording in System
 Settings > Privacy & Security, quit and reopen the app. Closing the window keeps it streaming
-(click its Dock icon to bring it back; Quit stops it), and "Open at login" starts it with the
+(click its Dock icon to bring it back; Quit stops it and puts the lights back), and "Open at login" starts it with the
 Mac. It finds the display by itself; if your network blocks broadcasts, give it the address:
 `defaults write com.sentiainstruments.lmd-visualizer host 192.168.1.82`.
 

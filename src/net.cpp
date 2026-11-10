@@ -284,7 +284,7 @@ void netTask(void*) {
 }  // namespace
 
 #if VISUALIZER
-// Packets from tools/visualizer: "LMDV", version 1, flags (bit 0: music playing), level,
+// Packets from tools/showcontrol: "LMDV", version 1, flags (bit 0: music playing), level,
 // beat, 16 bands (low to high, each 0..255), then the visualizer style (a VizStyle) and colour scheme (a ColourScheme). Every 2 s the display announces itself
 // ("LMD9020 1") by broadcast on the next port, so the Mac can find it.
 void vizTask(void*) {
