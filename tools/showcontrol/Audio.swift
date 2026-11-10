@@ -360,7 +360,45 @@ final class Analyzer {
 enum CaptureError: Error { case noSpotify, noDisplay }
 
 // Spotify's audio only, through ScreenCaptureKit (the picture is a token 2x2 at 1 fps).
+// `defaults write com.sentiainstruments.lmd-visualizer recordSeconds -int 180`: the next capture's
+// first seconds of sound (mono, as the analyzer hears it) go to ~/Library/Logs/Show Control as a
+// WAV, with the time its first sample was played, to study the drum detection against.
+final class Recorder {
+    private var samples: [Float] = []
+    private var first = 0.0, rate = 48000.0
+    private let want: Double
+    private var done = false
+
+    init?() {
+        let s = UserDefaults.standard.integer(forKey: "recordSeconds")
+        guard s > 0 else { return nil }
+        want = Double(s)
+    }
+
+    func add(_ mono: [Float], rate r: Double, played: Double) {
+        guard !done else { return }
+        if samples.isEmpty { first = played; rate = r }
+        samples += mono
+        guard Double(samples.count) / rate >= want else { return }
+        done = true
+        let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Show Control")
+        let name = "recording-\(Int(Date().timeIntervalSince1970))"
+        var wav = Data()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { wav.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { wav.append(contentsOf: $0) } }
+        let bytes = UInt32(samples.count * 4)
+        wav.append(contentsOf: Array("RIFF".utf8)); u32(36 + bytes); wav.append(contentsOf: Array("WAVEfmt ".utf8))
+        u32(16); u16(3); u16(1); u32(UInt32(rate)); u32(UInt32(rate) * 4); u16(4); u16(32)  // 32-bit float, mono
+        wav.append(contentsOf: Array("data".utf8)); u32(bytes)
+        samples.withUnsafeBufferPointer { wav.append(Data(buffer: $0)) }
+        try? wav.write(to: logs.appendingPathComponent(name + ".wav"))
+        try? String(format: "%.6f\n", first).write(to: logs.appendingPathComponent(name + ".start"), atomically: true, encoding: .utf8)
+        samples = []
+    }
+}
+
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
+    private var recorder = Recorder()
     private(set) var running = false
     private var stream: SCStream?
     private let analyzer: Analyzer
@@ -419,6 +457,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         if played == pts { Sync.captureLag += (max(0, lag) - Sync.captureLag) * 0.05 }
         Sync.bufferLength += (length - Sync.bufferLength) * 0.05
         analyzer.push(mono, rate: asbd.mSampleRate, played: played)
+        recorder?.add(mono, rate: asbd.mSampleRate, played: played)
     }
 
     func stop() async {

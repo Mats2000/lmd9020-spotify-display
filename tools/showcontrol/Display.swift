@@ -14,6 +14,7 @@ final class Link {
     private var target: sockaddr_in?
     private let lock = NSLock()
     private(set) var address: String?
+    private(set) var heardAt = Date.distantPast  // its last announcement
 
     init(host: String?) {
         sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
@@ -50,10 +51,14 @@ final class Link {
             from.sin_port = displayPort.bigEndian
             var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
             inet_ntop(AF_INET, &from.sin_addr, &text, socklen_t(INET_ADDRSTRLEN))
+            let ip = String(cString: text)
             lock.lock()
             target = from
-            address = String(cString: text)
+            let moved = address != ip
+            address = ip
+            heardAt = Date()
             lock.unlock()
+            if moved { UserDefaults.standard.set(ip, forKey: "host") }  // sent to at once after a restart
         }
     }
 

@@ -80,8 +80,8 @@ struct DisplayPage: View {
                         .frame(width: 512, height: 384)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Sentia.line, lineWidth: 1))
-                        Text(show.displayAddress.map { "LMD-9020 at \($0)" } ?? "Looking for the display…")
-                            .font(.soraLight(12)).foregroundColor(Sentia.ink2)
+                        Text(displayLine).font(.soraLight(12)).foregroundColor(Sentia.ink2)
+                            .frame(width: 512, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                         if show.needsPermission {
                             Text("Allow Show Control under Privacy & Security → Screen & System Audio Recording.")
                                 .font(.sora(12)).foregroundColor(Sentia.inkLight)
@@ -119,6 +119,18 @@ struct DisplayPage: View {
             }
             .padding(.horizontal, 40)
         }
+    }
+}
+
+extension DisplayPage {
+    // The display announces itself every 2 s; not hearing it means it's off or off the network, or
+    // macOS is keeping the app off the network.
+    var displayLine: String {
+        guard let ip = show.displayAddress else {
+            return "Looking for the display… If it's on and on the Wi-Fi, allow Show Control under System Settings → Privacy & Security → Local Network."
+        }
+        if show.displayHeard { return "LMD-9020 at \(ip)" }
+        return "Not hearing the LMD-9020 (last at \(ip); still sending there). Check it's on, or allow Show Control under System Settings → Privacy & Security → Local Network."
     }
 }
 

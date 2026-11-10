@@ -52,7 +52,7 @@ final class Rig {
 
     private let goveeOwn = 0.03
     // `defaults write com.sentiainstruments.lmd-visualizer logKicks -bool true`: every kick to
-    // ~/Library/Logs/Show Control/kicks.log (heard, period, strength, found at), to study the timing.
+    // ~/Library/Logs/Show Control/kicks.log (heard, period, strength, found at, played), to study the timing.
     private lazy var kickLog: FileHandle? = {
         guard UserDefaults.standard.bool(forKey: "logKicks") else { return nil }
         let url = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Show Control/kicks.log")
@@ -136,7 +136,7 @@ final class Rig {
         queue.async {
             self.preview.kick(strength)
             let heard = Sync.heard(played)
-            self.kickLog?.write(Data(String(format: "%.4f %.4f %.3f %.4f\n", heard, period, strength, Sync.now).utf8))
+            self.kickLog?.write(Data(String(format: "%.4f %.4f %.3f %.4f %.4f\n", heard, period, strength, Sync.now, played).utf8))
             self.lastStrength = strength
             var covered = false  // the slow lights already had it
             for g in self.guesses where abs(g.at - heard) < 0.05 {

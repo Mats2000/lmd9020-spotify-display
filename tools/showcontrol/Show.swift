@@ -30,6 +30,7 @@ final class Show: ObservableObject {
     @Published var status = "Starting…"
     @Published var needsPermission = false
     @Published var displayAddress: String?
+    @Published var displayHeard = false  // announced itself in the last 10 s
     @Published var webAddress: String?
     @Published var hasPassword = WebAuth.shared.hasPassword
     @Published var phonesSignedIn = WebAuth.shared.keys.count
@@ -165,6 +166,7 @@ final class Show: ObservableObject {
             }
         }
         displayAddress = link.address
+        displayHeard = Date().timeIntervalSince(link.heardAt) < 10
         refreshFixtures()
         wantFrames()
         speakerMs = Int(Sync.speakerDelay * 1000)
