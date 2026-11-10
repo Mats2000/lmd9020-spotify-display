@@ -254,7 +254,10 @@ display's visualizer and scheme (and TILES' animation when taken over). **Club**
 arc (washes in breakdowns, grooves in the body, strobes at the peak, a switch on each drop, a new
 look about every 32 bars or at a new section), **Lounge** stays slow and gentle (a change every
 minute or two, never a strobe), **Rave** goes maximal (strikes and strobes, a new look every
-8 bars). It lies over the settings and saves nothing; off, everything is as it was.
+8 bars). Each style has four macros (Club: energy, pace, colour, drop impact; Lounge: warmth, motion,
+depth, drift; Rave: intensity, pace, chaos, strobe), 50 leaving its looks as they are, and a
+palette can be picked for the whole rig: Cover, Sentia, Ice or Sunset (none: each look its own).
+It lies over the settings and saves nothing; off, everything is as it was.
 
 The **Scenes** page saves the whole room (every light's look and settings, the display's style)
 under a name, called back with one click. Everything lives in
@@ -286,7 +289,9 @@ every light the show still has goes back to its own colour and brightness.
 kept in `~/Library/Logs/Show Control/display.log`: each song, each cover (downloaded or from the
 prefetch, how long it took, the memory and stack left), every 30 s the render timing.
 
-**On a phone:** the app serves the same controls (Lights, Scenes, Display) on port 8770. Set a
+**On a phone:** the app serves a remote on port 8770: the autopilot first (its style, what it's
+running, Next look, the palette and macros, lights and TILES on or off), then Lights, Scenes and
+Display. Set a
 password on the Scenes page (10 characters or more); a phone signs in once and keeps a long random
 key (the Mac keeps only its hash). Five wrong tries lock sign-in for 30 s, doubling each time;
 "Sign out every phone" or a new password drops every key. In Safari, Share > Add to Home Screen

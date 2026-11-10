@@ -600,10 +600,12 @@ struct AutopilotPage: View {
                     }
                     .frame(width: 420)
                     VStack(alignment: .leading, spacing: 14) {
+                        if show.autopilot != nil { palettes.padding(.bottom, 22) }
+                        if let s = show.autopilot { macros(s).padding(.bottom, 26) }
                         SectionLabel(text: "Now")
                         if show.autopilot == nil {
                             Text("Off.").font(.soraLight(13)).foregroundColor(Sentia.ink2)
-                        } else if let r = show.autoRecipe {
+                        } else if let r = show.liveRecipe {
                             Text(r.name).font(.exo(22))
                             Text("The music: \(show.autoTier.rawValue)\(show.timing.playing ? "" : " (paused)")").font(.sora(13))
                             meter
@@ -625,6 +627,64 @@ struct AutopilotPage: View {
                 .padding(.bottom, 40)
             }
             .padding(.horizontal, 40)
+        }
+    }
+
+    // The palette for the whole rig: four, or none picked (each look its own).
+    private var palettes: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Palette")
+            HStack(spacing: 8) {
+                ForEach(Autopilot.Palette.allCases, id: \.self) { p in
+                    Button { show.palette = show.palette == p ? nil : p } label: {
+                        HStack(spacing: 6) {
+                            swatch(p)
+                            Text(p.name).font(.sora(12.5))
+                        }
+                        .padding(.horizontal, 12).frame(height: 32)
+                        .background(Capsule().fill(show.palette == p ? Sentia.panel : Color.clear))
+                        .overlay(Capsule().stroke(show.palette == p ? Sentia.periwinkle : Sentia.line, lineWidth: 1.2))
+                        .foregroundColor(show.palette == p ? Sentia.inkLight : Sentia.ink2)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Text(show.palette == nil ? "None picked: each look brings its own colours." : "Every light, the display and TILES in \(show.palette!.name). Click it again for each look's own.")
+                .font(.soraLight(11)).foregroundColor(Sentia.ink2)
+        }
+    }
+
+    @ViewBuilder private func swatch(_ p: Autopilot.Palette) -> some View {
+        if p == .cover {
+            Image(systemName: "photo").font(.system(size: 10, weight: .light))
+        } else if let i = schemes.firstIndex(of: p.scheme), i > 0, i <= schemeLampColours.count {
+            HStack(spacing: 2) {
+                ForEach(Array(schemeLampColours[i - 1].prefix(3).enumerated()), id: \.offset) { _, c in
+                    Circle().fill(c.color).frame(width: 8, height: 8)
+                }
+            }
+        }
+    }
+
+    // The style's four macros: each a slider with what it does.
+    private func macros(_ s: Autopilot.Style) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SectionLabel(text: "\(s.rawValue.capitalized) macros")
+            ForEach(Array((Autopilot.macroNames[s] ?? []).enumerated()), id: \.offset) { i, m in
+                VStack(alignment: .leading, spacing: 4) {
+                    SentiaSlider(label: m.0, low: .constant(0), high: Binding(
+                        get: { show.macros[s.rawValue]?[i] ?? 50 },
+                        set: { v in
+                            var all = show.macros
+                            var four = all[s.rawValue] ?? [50, 50, 50, 50]
+                            four[i] = v
+                            all[s.rawValue] = four
+                            show.macros = all
+                        }), bounds: 0...100, range: false)
+                    Text(m.1).font(.soraLight(11)).foregroundColor(Sentia.ink2)
+                }
+            }
         }
     }
 

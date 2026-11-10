@@ -127,7 +127,7 @@ final class WebServer {
     }
 
     private func json(_ status: Int, _ object: Any) -> (Int, String, Data) {
-        (status, "application/json", (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8))
+        (status, "application/json", (try? JSONSerialization.data(withJSONObject: object, options: .sortedKeys)) ?? Data("{}".utf8))
     }
 
     private func handle(_ method: String, _ path: String, _ headers: [String: String], _ body: Data) -> (Int, String, Data) {
@@ -215,7 +215,17 @@ extension Show {
         return [
             "title": title, "artist": artist, "status": status,
             "lampsOn": lampsOn, "style": styleName, "scheme": schemeName,
-            "autopilot": autopilot?.rawValue ?? "off", "autoLook": autoRecipe?.name ?? "", "autoTier": autoTier.rawValue,
+            "autopilot": autopilot?.rawValue ?? "off", "palette": palette?.rawValue ?? "",
+            "macros": autopilot.map { s in
+                (Autopilot.macroNames[s] ?? []).enumerated().map { i, m in
+                    ["name": m.0, "about": m.1, "value": macros[s.rawValue]?[i] ?? 50] as [String: Any]
+                }
+            } ?? [],
+            "energy": timing.energy, "playing": timing.playing, "tilesOn": tiles.on, "tilesName": tilesName ?? "",
+            "autoParts": liveRecipe.map { r in
+                ["lamps": "\(r.movement.rawValue.capitalized), speed \(r.speed)", "bulb": r.bulb.rawValue.capitalized,
+                 "display": "\(r.display), \(r.scheme)", "tiles": tiles.on ? "\(r.tiles)".capitalized : ""]
+            } ?? [:], "autoLook": autoRecipe?.name ?? "", "autoTier": autoTier.rawValue,
             "styles": ["Shuffle"] + styles + ["Off"], "schemes": schemes,
             "presets": looks.map { ["id": $0.id.uuidString, "name": $0.name] },
             "fixtures": fixtures.map { f in
@@ -236,7 +246,17 @@ extension Show {
         func int(_ k: String, _ r: ClosedRange<Int>) -> Int? { (a[k] as? Int).map { max(r.lowerBound, min(r.upperBound, $0)) } }
         switch a["action"] as? String {
         case "lamps": if let on = a["on"] as? Bool { lampsOn = on }
-        case "autopilot": if let s = a["style"] as? String { autopilot = Autopilot.Style(rawValue: s) }
+        case "autopilot":
+            if let s = a["style"] as? String { autopilot = Autopilot.Style(rawValue: s) }
+            if let p = a["palette"] as? String { palette = Autopilot.Palette(rawValue: p) }
+        case "macro":
+            if let s = autopilot, let i = a["index"] as? Int, (0..<4).contains(i), let v = a["value"] as? Int {
+                var four = macros[s.rawValue] ?? [50, 50, 50, 50]
+                four[i] = max(0, min(100, v))
+                macros[s.rawValue] = four
+            }
+        case "nextLook": if autopilot != nil { pilot.next() }
+        case "tiles": if let on = a["on"] as? Bool { tiles.on = on }
         case "display":
             if let s = a["style"] as? String, s == "Shuffle" || s == "Off" || styles.contains(s) { styleName = s }
             if let s = a["scheme"] as? String, schemes.contains(s) { schemeName = s }

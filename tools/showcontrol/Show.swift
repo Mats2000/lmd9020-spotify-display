@@ -43,11 +43,35 @@ final class Show: ObservableObject {
     @Published var autopilot: Autopilot.Style? {
         didSet {
             UserDefaults.standard.set(autopilot?.rawValue, forKey: "autopilot")
-            if let s = autopilot { pilot.set(s); if autoRecipe == nil { pilot.newSong(title + " ") } } else { autoRecipe = nil }
+            if let s = autopilot {
+                pilot.macros = macros[s.rawValue] ?? [50, 50, 50, 50]
+                pilot.set(s)
+                if autoRecipe == nil { pilot.newSong(title + " ") }
+            } else { autoRecipe = nil }
             applyAutopilot()
         }
     }
     @Published var autoRecipe: Autopilot.Recipe?
+    // Each style's four macros (Autopilot.macroNames), 0-100.
+    @Published var macros: [String: [Int]] {
+        didSet {
+            UserDefaults.standard.set(macros, forKey: "autopilotMacros")
+            if let s = autopilot { pilot.macros = macros[s.rawValue] ?? [50, 50, 50, 50] }
+            applyAutopilot()
+        }
+    }
+    @Published var palette: Autopilot.Palette? {
+        didSet { UserDefaults.standard.set(palette?.rawValue, forKey: "autopilotPalette"); applyAutopilot() }
+    }
+    // What's running, as the macros turn it, in the palette if one's picked.
+    var liveRecipe: Autopilot.Recipe? {
+        guard var r = autoRecipe.map(pilot.tuned) else { return nil }
+        if let p = palette {
+            r.source = p == .cover ? .cover : .scheme
+            r.scheme = p.scheme
+        }
+        return r
+    }
     @Published var autoTier = Autopilot.Tier.groove
     let pilot: Autopilot
     @Published var tilesName: String?
@@ -82,7 +106,11 @@ final class Show: ObservableObject {
         looks = LookStore.load()
         selected = d.string(forKey: "light")
         let style = d.string(forKey: "autopilot").flatMap(Autopilot.Style.init)
+        palette = d.string(forKey: "autopilotPalette").flatMap(Autopilot.Palette.init)
+        let savedMacros = d.dictionary(forKey: "autopilotMacros") as? [String: [Int]] ?? [:]
+        macros = savedMacros
         pilot = Autopilot(style: style ?? .club)
+        pilot.macros = savedMacros[(style ?? .club).rawValue] ?? [50, 50, 50, 50]
         autopilot = style
         tiles = d.data(forKey: "tiles").flatMap { try? JSONDecoder().decode(TilesLink.Mode.self, from: $0) } ?? TilesLink.Mode()
         trimMs = d.integer(forKey: "trim")
@@ -175,15 +203,22 @@ final class Show: ObservableObject {
 
     private func applyTiles() {
         var t = tiles
-        if autopilot != nil, let r = autoRecipe {
+        if autopilot != nil, let r = liveRecipe {
             t.animation = r.tiles
             t.glow = r.glow
+            // A scheme palette gives TILES its three colours too (the cover's: TILES' own).
+            if let p = palette, p != .cover, let i = schemes.firstIndex(of: p.scheme), i > 0, i <= schemeLampColours.count {
+                let c = schemeLampColours[i - 1]
+                t.main = c[0]
+                t.second = c[min(1, c.count - 1)]
+                t.accent = c[min(2, c.count - 1)]
+            }
         }
         rig.tiles.set(t)
     }
 
     private func applyStyle() {
-        if autopilot != nil, let r = autoRecipe, styleName != "Off" {
+        if autopilot != nil, let r = liveRecipe, styleName != "Off" {
             analyzer.enabled = true
             shuffling = false
             analyzer.style = UInt8(styles.firstIndex(of: r.display) ?? 0)
@@ -405,7 +440,7 @@ final class Show: ObservableObject {
     private func pushPlan() {
         var p = Rig.Plan()
         p.fixtures = fixtures
-        if autopilot != nil, let r = autoRecipe {
+        if autopilot != nil, let r = liveRecipe {
             p.fixtures = fixtures.map { f in
                 var f = f
                 var l = f.settings.look

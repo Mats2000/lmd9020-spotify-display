@@ -54,7 +54,7 @@ final class Relay {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(secret, forHTTPHeaderField: "X-Mac-Secret")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys)  // the same state reads the same
         let done = DispatchSemaphore(value: 0)
         var taps: [[String: Any]]?
         session.dataTask(with: req) { data, response, _ in

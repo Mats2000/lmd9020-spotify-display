@@ -9,6 +9,12 @@ import Foundation
 final class Autopilot {
     enum Style: String, CaseIterable, Codable { case club, lounge, rave }
     enum Tier: String { case calm, groove, peak }
+    // A palette for the whole rig, or none (each look its own colours). scheme: the display's.
+    enum Palette: String, CaseIterable, Codable {
+        case cover, sentia, ice, sunset
+        var name: String { ["Cover", "Sentia", "Ice", "Sunset"][Self.allCases.firstIndex(of: self)!] }
+        var scheme: String { ["Cover Colours", "Sentia", "Ice", "Amber"][Self.allCases.firstIndex(of: self)!] }
+    }
 
     struct Recipe: Equatable {
         var name: String
@@ -28,6 +34,32 @@ final class Autopilot {
     }
 
     private(set) var style: Style
+    // The style's four macros, 0-100 (50 the pools as they are): see `macroNames`.
+    var macros = [50, 50, 50, 50]
+
+    static let macroNames: [Style: [(String, String)]] = [
+        .club: [("Energy", "How readily it calls a peak, and how hard the looks move."),
+                ("Pace", "How often the look changes."),
+                ("Colour", "The cover's colours, through to the display's colour schemes."),
+                ("Drop impact", "A drop as a pulse, through to a full strobe hit.")],
+        .lounge: [("Warmth", "Cool ice colours, the cover's, or warm amber and soft-club tones."),
+                  ("Motion", "How fast things move."),
+                  ("Depth", "A soft even glow, through to deep contrast between quiet and loud."),
+                  ("Drift", "How slowly it evolves.")],
+        .rave: [("Intensity", "How much of the time it's at the peak, and how fast."),
+                ("Pace", "How often the look changes."),
+                ("Chaos", "Orderly, through to random colours, directions and picks."),
+                ("Strobe", "How hard the kicks hit the lights.")],
+    ]
+
+    private func knob(_ i: Int) -> Double { Double(macros[i]) / 100 }  // 0-1
+    // How long between changes, times: pace 100 a third, 0 three times (lounge's drift the other way).
+    private var pace: Double {
+        let p = knob(style == .lounge ? 3 : 1)
+        return style == .lounge ? pow(3, (p - 0.5) * 2) : pow(3, (0.5 - p) * 2)
+    }
+    // Where a peak starts: lower with more energy (club) or intensity (rave).
+    private var peakAt: Double { style == .lounge ? 0.72 : 0.72 - (knob(0) - 0.5) * 0.4 }
     private(set) var tier = Tier.groove
     private(set) var recipe: Recipe?
     private(set) var changedAt = Date.distantPast
@@ -39,6 +71,7 @@ final class Autopilot {
     private var tierSince = Date.distantPast, lastCalm = Date.distantPast
     private var seenSongStep = 0, title = ""
     private var history: [String] = []
+    private(set) var lastWasDrop = false
     private var clock = Date()
 
     init(style: Style) { self.style = style }
@@ -48,6 +81,9 @@ final class Autopilot {
         style = s
         change(reason: "style")
     }
+
+    // A new look now (the remote's "next").
+    func next() { change(reason: "manual") }
 
     func newSong(_ t: String) {
         guard t != title else { return }
@@ -66,7 +102,7 @@ final class Autopilot {
         low = min(slow, low + (slow - low) * 0.01)
         high = max(slow, high + (slow - high) * 0.01)
         let rel = (slow - low) / max(0.08, high - low)
-        let t: Tier = rel > 0.72 ? .peak : rel < 0.32 ? .calm : .groove
+        let t: Tier = rel > peakAt ? .peak : rel < 0.32 ? .calm : .groove
 
         if tier == .calm { lastCalm = now }
         let bar = (m.period > 0.25 ? m.period : 0.5) * 4
@@ -77,6 +113,7 @@ final class Autopilot {
             tier = t
             tierSince = now
             if drop { drops += 1 }
+            lastWasDrop = drop
             // Lounge keeps its slow pace even across the song's arc.
             if drop || style != .lounge || since > minimumGap(bar) { change(reason: drop ? "drop" : "tier") }
             return
@@ -88,7 +125,9 @@ final class Autopilot {
         if since > everyBars(bar) { change(reason: "time") }
     }
 
-    private func minimumGap(_ bar: Double) -> Double {
+    private func minimumGap(_ bar: Double) -> Double { pace * baseGap(bar) }
+
+    private func baseGap(_ bar: Double) -> Double {
         switch style {
         case .club: return bar * 8
         case .lounge: return 45
@@ -96,7 +135,9 @@ final class Autopilot {
         }
     }
 
-    private func everyBars(_ bar: Double) -> Double {
+    private func everyBars(_ bar: Double) -> Double { pace * baseEvery(bar) }
+
+    private func baseEvery(_ bar: Double) -> Double {
         switch style {
         case .club: return bar * 32
         case .lounge: return 100
@@ -105,7 +146,10 @@ final class Autopilot {
     }
 
     private func change(reason: String) {
-        let pool = Self.pool(style, tier)
+        if reason != "drop" { lastWasDrop = false }
+        var pool = Self.pool(style, tier)
+        // Rave's chaos, high: a peak look can come up any time.
+        if style == .rave, knob(2) > 0.75, Double.random(in: 0...1) < knob(2) - 0.5 { pool += Self.pool(.rave, .peak) }
         // Not one of the last few, so it keeps moving.
         let fresh = pool.filter { !history.suffix(min(pool.count - 1, 3)).contains($0.name) }
         guard let r = (fresh.isEmpty ? pool : fresh).randomElement() else { return }
@@ -114,6 +158,55 @@ final class Autopilot {
         recipe = r
         changedAt = clock
         onChange?(r)
+    }
+
+    // A recipe as the macros turn it.
+    func tuned(_ raw: Recipe) -> Recipe {
+        var r = raw
+        let pick = r.name.count  // a steady choice per recipe
+        let warm = ["Amber", "Soft Club"], schemesAll = ["Sentia", "Ice", "Amber", "Soft Club"]
+        func speed(_ d: Double) { r.speed = max(1, min(5, r.speed + Int(d.rounded()))) }
+        switch style {
+        case .club:
+            speed((knob(0) - 0.5) * 3)
+            r.rhythm.0 = Int((Double(r.rhythm.0) * (1.5 - knob(0))).rounded())
+            if knob(2) > 0.66 || (knob(2) > 0.33 && r.source == .scheme) {
+                r.source = .scheme
+                if r.scheme == "Cover Colours" { r.scheme = schemesAll[pick % schemesAll.count] }
+            } else if knob(2) < 0.33 {
+                r.source = .cover
+                r.scheme = "Cover Colours"
+            }
+            let impact = knob(3)
+            r.kick = Int((Double(r.kick) * (0.6 + 0.8 * impact)).rounded())
+            if lastWasDrop {
+                r.bulb = impact > 0.4 ? .strobe : .pulse
+                r.glow = impact > 0.4 ? .white : .main
+            } else if impact < 0.25, r.bulb == .strobe {
+                r.bulb = .pulse
+            }
+        case .lounge:
+            let w = knob(0)
+            if w < 0.33 { r.source = .scheme; r.scheme = "Ice" }
+            else if w > 0.66 { r.source = .scheme; r.scheme = warm[pick % warm.count] }
+            r.speed = max(1, min(4, r.speed + Int(((knob(1) - 0.5) * 4).rounded())))
+            // Depth: toward a soft even glow (60-78%) below the middle, deep contrast (10-100%) above.
+            let d = knob(2), soft = (60.0, 78.0), deep = (10.0, 100.0)
+            let to = d < 0.5 ? soft : deep, t = abs(d - 0.5) * 2
+            r.rhythm = (Int(Double(r.rhythm.0) + (to.0 - Double(r.rhythm.0)) * t),
+                        Int(Double(r.rhythm.1) + (to.1 - Double(r.rhythm.1)) * t))
+        case .rave:
+            speed((knob(0) - 0.5) * 2)
+            r.rhythm.0 = Int((Double(r.rhythm.0) * (1.4 - knob(0) * 0.8)).rounded())
+            let chaos = knob(2)
+            r.random = chaos > 0.65 ? true : chaos < 0.3 ? false : r.random
+            if chaos > 0.8 { r.direction = .random } else if chaos < 0.2 { r.direction = .up }
+            let strobe = knob(3)
+            r.kick = Int((Double(r.kick) * (0.5 + strobe)).rounded())
+            if strobe < 0.3 { r.bulb = .pulse; r.glow = .second } else if strobe > 0.7 { r.bulb = .strobe; r.glow = .white }
+        }
+        r.kick = max(0, min(150, r.kick))
+        return r
     }
 
     // The pools. Visualizers: Classic Glow, Spectrum, Pulse Halo, Lava, Rave, Fractal. Schemes:
