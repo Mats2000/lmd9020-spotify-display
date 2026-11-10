@@ -1,4 +1,4 @@
-// The window: a sidebar of pages (Display, Looks, Venue, then TILES), each a calm Sentia page.
+// The window: a sidebar of pages (Display, Lights, Scenes, then TILES), each a calm Sentia page.
 
 import SwiftUI
 
@@ -11,8 +11,8 @@ struct RootView: View {
             Group {
                 switch show.page {
                 case .display: DisplayPage(show: show)
-                case .looks: LooksPage(show: show)
-                case .venue: VenuePage(show: show)
+                case .lights: LightsPage(show: show)
+                case .scenes: ScenesPage(show: show)
                 case .tiles: SoonPage(title: "TILES", text: "Pads that call up looks, and TILES' own lights as part of the show.")
                 }
             }
@@ -137,41 +137,97 @@ struct SchemeDots: View {
     }
 }
 
-// MARK: - Looks
+// MARK: - Lights
 
-struct LooksPage: View {
+// Every light on its own: pick one, then its switch, brightness, kick and its own look. Presets
+// are looks saved to reuse: one click copies a preset into the open light.
+struct LightsPage: View {
     @ObservedObject var show: Show
 
     private func bind<T>(_ kp: WritableKeyPath<LampLook, T>) -> Binding<T> {
         Binding(get: { show.look[keyPath: kp] }, set: { var l = show.look; l[keyPath: kp] = $0; show.look = l })
     }
+    private func setting(_ kp: WritableKeyPath<FixtureSettings, Int>) -> Binding<Int> {
+        Binding(get: { show.light?.settings[keyPath: kp] ?? 0 },
+                set: { v in if let id = show.light?.id { show.update(id) { $0.settings[keyPath: kp] = v } } })
+    }
 
-    private static let movementNames: [LampLook.Movement: String] = [
+    static let movementNames: [LampLook.Movement: String] = [
         .flow: "Flow", .twinkle: "Twinkle", .flexing: "Flexing", .stacking: "Stacking",
         .strike: "Strike", .gradient: "Gradient", .chase: "Chase", .pulse: "Pulse",
     ]
-    private static let sourceNames: [LampLook.Source: String] = [.own: "These colours", .cover: "Cover", .scheme: "Display colours"]
-    private static let directionNames: [LampLook.Direction: String] = [
+    static let sourceNames: [LampLook.Source: String] = [.own: "These colours", .cover: "Cover", .scheme: "Display colours"]
+    static let directionNames: [LampLook.Direction: String] = [
         .up: "Up", .down: "Down", .inward: "Inward", .outward: "Outward", .random: "Random",
     ]
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageHeader(title: "Looks")
-                HStack(alignment: .top, spacing: 40) {
-                    LampDrawing(segments: show.previewSegments)
-                    controls.frame(maxWidth: 520)
-                    looksColumn.frame(width: 230)
+                HStack(alignment: .lastTextBaseline) {
+                    PageHeader(title: "Lights")
+                    Spacer()
+                    SentiaToggle(title: show.lampsOn ? "Lights follow the music" : "Lights off", on: $show.lampsOn)
                 }
-                .padding(.bottom, 40)
+                if show.fixtures.isEmpty {
+                    Text("Looking for lights…").font(.soraLight(12)).foregroundColor(Sentia.ink2)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(show.fixtures) { f in LightTab(show: show, fixture: f, chosen: f.id == show.light?.id) }
+                        }
+                    }
+                    .padding(.bottom, 32)
+                    if let f = show.light { panel(f) }
+                }
+                Text(timingText).font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 36).padding(.bottom, 40)
             }
             .padding(.horizontal, 40)
         }
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 30) {
+    private var timingText: String {
+        let t = show.timing
+        let hear = "The music reaches the app \(t.captureMs) ms after Spotify plays it, the speakers add \(show.speakerMs) ms."
+        if t.ahead { return hear + " The beat is steady: kicks go out ahead, each light by its own delay, to land on it." }
+        return hear + (t.lateMs > 5 ? " Kicks land \(t.lateMs) ms late until the beat is steady." : " Kicks land on time.")
+    }
+
+    @ViewBuilder private func panel(_ f: Fixture) -> some View {
+        HStack(alignment: .top, spacing: 40) {
+            if f.kind == .govee { LampDrawing(segments: show.previewSegments) } else { BulbDrawing(colour: show.previewSegments.first ?? .black) }
+            VStack(alignment: .leading, spacing: 30) {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(f.name).font(.sora(16))
+                        Text(f.kind == .govee ? "Govee · \(f.segments) segments · \(f.address)" : "Matter light").font(.soraLight(11)).foregroundColor(Sentia.ink2)
+                    }
+                    Spacer()
+                    if f.held {
+                        Chip(title: "Take back", chosen: false) { show.takeBack(f.id) }
+                    } else {
+                        Chip(title: "Hand to Alexa", chosen: false) { show.hold(f.id) }
+                        SentiaToggle(title: "", on: Binding(get: { f.settings.on }, set: { v in show.update(f.id) { $0.settings.on = v } }))
+                    }
+                }
+                if f.held {
+                    Text("Alexa has it. The show leaves it alone until you take it back.").font(.soraLight(12.5)).foregroundColor(Sentia.ink2)
+                } else {
+                    VStack(alignment: .leading, spacing: 26) {
+                        SentiaSlider(label: "Brightness", low: .constant(0), high: setting(\.brightness), bounds: 0...100, range: false, unit: "%")
+                        SentiaSlider(label: "Kick", low: .constant(0), high: setting(\.kick), bounds: 0...150, range: false, unit: "%")
+                    }
+                    lookControls(f)
+                }
+            }
+            .frame(maxWidth: 520)
+            presets(f).frame(width: 230)
+        }
+    }
+
+    @ViewBuilder private func lookControls(_ f: Fixture) -> some View {
+        let strip = f.kind == .govee
+        if strip {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel(text: "Movement")
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(118), spacing: 8), count: 4), alignment: .leading, spacing: 8) {
@@ -180,25 +236,29 @@ struct LooksPage: View {
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 12) {
-                SectionLabel(text: "Colours")
-                HStack(spacing: 8) {
-                    ForEach(LampLook.Source.allCases, id: \.self) { s in
-                        Chip(title: Self.sourceNames[s]!, chosen: show.look.source == s) { bind(\.source).wrappedValue = s }
-                    }
-                }
-                if show.look.source == .own { Swatches(colours: bind(\.colours)) }
-                HStack(spacing: 8) {
-                    Chip(title: "In order", chosen: !show.look.random) { bind(\.random).wrappedValue = false }
-                    Chip(title: "Random", chosen: show.look.random) { bind(\.random).wrappedValue = true }
+        }
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel(text: "Colours")
+            HStack(spacing: 8) {
+                ForEach(LampLook.Source.allCases, id: \.self) { s in
+                    Chip(title: Self.sourceNames[s]!, chosen: show.look.source == s) { bind(\.source).wrappedValue = s }
                 }
             }
-            VStack(alignment: .leading, spacing: 26) {
+            if show.look.source == .own { Swatches(colours: bind(\.colours)) }
+            HStack(spacing: 8) {
+                Chip(title: "In order", chosen: !show.look.random) { bind(\.random).wrappedValue = false }
+                Chip(title: "Random", chosen: show.look.random) { bind(\.random).wrappedValue = true }
+            }
+        }
+        VStack(alignment: .leading, spacing: 26) {
+            if strip {
                 SentiaSlider(label: "Spots", low: bind(\.spotsLow), high: bind(\.spotsHigh), bounds: 1...8, range: true)
                 SentiaSlider(label: "Size", low: bind(\.sizeLow), high: bind(\.sizeHigh), bounds: 1...10, range: true)
-                SentiaSlider(label: "Speed", low: .constant(1), high: bind(\.speed), bounds: 1...5, range: false)
-                SentiaSlider(label: "Rhythm", low: bind(\.rhythmLow), high: bind(\.rhythmHigh), bounds: 0...100, range: true, unit: "%")
             }
+            SentiaSlider(label: strip ? "Speed" : "Colour changes", low: .constant(1), high: bind(\.speed), bounds: 1...5, range: false)
+            SentiaSlider(label: "Rhythm", low: bind(\.rhythmLow), high: bind(\.rhythmHigh), bounds: 0...100, range: true, unit: "%")
+        }
+        if strip {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel(text: "Direction")
                 HStack(spacing: 8) {
@@ -210,53 +270,93 @@ struct LooksPage: View {
         }
     }
 
-    private var looksColumn: some View {
+    private func presets(_ f: Fixture) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionLabel(text: "Looks").padding(.bottom, 6)
+            SectionLabel(text: "Presets").padding(.bottom, 6)
+            let current = show.preset(of: f.settings.look)
             ForEach(show.looks) { l in
-                ListRow(title: l.name, chosen: l.id == show.lookID) { show.lookID = l.id }
+                ListRow(title: l.name, chosen: l.id == current, trailing: {
+                    if show.looks.count > 1 {
+                        Button { show.deletePreset(l.id) } label: {
+                            Image(systemName: "xmark").font(.system(size: 10, weight: .light)).foregroundColor(Sentia.ink2)
+                        }.buttonStyle(.plain)
+                    }
+                }) { show.loadPreset(l.id) }
             }
-            TextField("Name", text: bind(\.name))
+            TextField("Look name", text: bind(\.name))
                 .textFieldStyle(.plain).font(.sora(13))
                 .padding(.horizontal, 10).frame(height: 32)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Sentia.line, lineWidth: 1))
                 .padding(.top, 14)
-            HStack(spacing: 8) {
-                Chip(title: "Save as new", chosen: false) { show.saveAsNew() }
-                Chip(title: "Delete", chosen: false) { show.deleteLook() }
-            }.padding(.top, 8)
-            Chip(title: "Use on all lights", chosen: false) { show.useOnAll() }.padding(.top, 8)
-
+            Chip(title: "Save as a preset", chosen: false) { show.savePreset() }.padding(.top, 8)
+            Chip(title: "Same on every light", chosen: false) { show.sameOnAll() }.padding(.top, 8)
         }
     }
 }
 
-// MARK: - Venue
+// A light in the row at the top: its name, its colours now, and whether it's in the show.
+struct LightTab: View {
+    @ObservedObject var show: Show
+    let fixture: Fixture
+    let chosen: Bool
+    var body: some View {
+        Button { show.selected = fixture.id } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(fixture.name).font(.sora(13)).lineLimit(1)
+                    Spacer()
+                    Circle().fill(fixture.held ? Sentia.line : (fixture.settings.on ? Sentia.periwinkle : Sentia.line)).frame(width: 6, height: 6)
+                }
+                HStack(spacing: 2) {
+                    ForEach(Array((show.live[fixture.id] ?? [.black]).enumerated()), id: \.offset) { _, c in
+                        RoundedRectangle(cornerRadius: 2).fill(c.color).frame(height: 10)
+                    }
+                }
+                Text(fixture.held ? "Alexa has it" : (fixture.settings.on ? fixture.settings.look.name : "Off"))
+                    .font(.soraLight(11)).foregroundColor(Sentia.ink2).lineLimit(1)
+            }
+            .padding(14)
+            .frame(width: 200)
+            .background(RoundedRectangle(cornerRadius: 16).fill(chosen ? Sentia.panel : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(chosen ? Sentia.periwinkle : Sentia.line, lineWidth: chosen ? 1.2 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
 
-// Every light with its own switch, look and brightness; scenes; and the phone page.
-struct VenuePage: View {
+// A single bulb, as it looks now.
+struct BulbDrawing: View {
+    let colour: RGB
+    var body: some View {
+        Circle().fill(colour.color)
+            .shadow(color: colour.color.opacity(Double(colour.level) / 255 * 0.8), radius: 18)
+            .frame(width: 72, height: 72)
+            .padding(18)
+            .background(RoundedRectangle(cornerRadius: 22).fill(Color.black.opacity(0.35)))
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(Sentia.line, lineWidth: 1))
+    }
+}
+
+// MARK: - Scenes
+
+// The whole room saved under a name (each light's look and settings, the display's style), and
+// the phone page.
+struct ScenesPage: View {
     @ObservedObject var show: Show
     @State private var sceneName = ""
+    @State private var password = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .lastTextBaseline) {
-                    PageHeader(title: "Venue")
-                    Spacer()
-                    SentiaToggle(title: show.lampsOn ? "Lamps follow the music" : "Lamps off", on: $show.lampsOn)
-                }
-                HStack(alignment: .top, spacing: 40) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionLabel(text: "Lights").padding(.bottom, 4)
-                        if show.fixtures.isEmpty {
-                            Text("Looking for lights…").font(.soraLight(12)).foregroundColor(Sentia.ink2)
-                        }
-                        ForEach(show.fixtures) { f in FixtureCard(show: show, fixture: f) }
-                    }
-                    .frame(maxWidth: 560)
+                PageHeader(title: "Scenes")
+                HStack(alignment: .top, spacing: 56) {
                     VStack(alignment: .leading, spacing: 4) {
                         SectionLabel(text: "Scenes").padding(.bottom, 6)
+                        if show.scenes.isEmpty {
+                            Text("None yet. Set the lights up, then save the room here.").font(.soraLight(12)).foregroundColor(Sentia.ink2)
+                        }
                         ForEach(show.scenes) { sc in
                             ListRow(title: sc.name, chosen: false, trailing: {
                                 Button { show.deleteScene(sc.id) } label: {
@@ -273,76 +373,34 @@ struct VenuePage: View {
                             show.saveScene(sceneName)
                             sceneName = ""
                         }.padding(.top, 8)
-
-                        SectionLabel(text: "On your phone").padding(.top, 36).padding(.bottom, 8)
-                        Text(show.webAddress ?? "Not on a network").font(.sora(13)).textSelection(.enabled)
-                        Text("Code \(show.webCode)").font(.sora(13)).foregroundColor(Sentia.ink2).padding(.top, 2)
-                        Text("Open it in Safari on the home Wi-Fi, then Share → Add to Home Screen.")
-                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 6)
                     }
-                    .frame(width: 260)
+                    .frame(width: 300)
+                    VStack(alignment: .leading, spacing: 4) {
+                        SectionLabel(text: "On your phone").padding(.bottom, 8)
+                        Text(show.publicAddress).font(.sora(13)).textSelection(.enabled)
+                        Text("At home also \(show.webAddress ?? "—")").font(.soraLight(12)).foregroundColor(Sentia.ink2).textSelection(.enabled).padding(.top, 2)
+                        Text(show.hasPassword ? "Phones sign in with the password set here." : "Set a password before a phone can sign in.")
+                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 10)
+                        SecureField(show.hasPassword ? "New password" : "Password", text: $password)
+                            .textFieldStyle(.plain).font(.sora(13))
+                            .padding(.horizontal, 10).frame(height: 32)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Sentia.line, lineWidth: 1))
+                            .padding(.top, 10)
+                        Text("At least 10 characters.").font(.soraLight(11)).foregroundColor(Sentia.ink2).padding(.top, 4)
+                        HStack(spacing: 8) {
+                            Chip(title: "Set password", chosen: false) {
+                                if show.setPassword(password) { password = "" }
+                            }
+                            Chip(title: "Sign out every phone", chosen: false) { show.signOutPhones() }
+                        }.padding(.top, 8)
+                        Text("Signed in: \(show.phonesSignedIn)").font(.soraLight(11)).foregroundColor(Sentia.ink2).padding(.top, 8)
+                    }
+                    .frame(width: 320)
                 }
                 .padding(.bottom, 40)
             }
             .padding(.horizontal, 40)
         }
-    }
-}
-
-struct FixtureCard: View {
-    @ObservedObject var show: Show
-    let fixture: Fixture
-
-    private var brightness: Binding<Int> {
-        Binding(get: { fixture.settings.brightness }, set: { v in show.update(fixture.id) { $0.settings.brightness = v } })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(fixture.name).font(.sora(14))
-                    Text(fixture.kind == .govee ? "Govee · \(fixture.segments) segments · \(fixture.address)" : "Matter light")
-                        .font(.soraLight(11)).foregroundColor(Sentia.ink2)
-                }
-                Spacer()
-                if !fixture.held {
-                    SentiaToggle(title: "", on: Binding(get: { fixture.settings.on }, set: { v in show.update(fixture.id) { $0.settings.on = v } }))
-                }
-            }
-            if fixture.held {
-                HStack {
-                    Text("Alexa has it. The show leaves it alone.").font(.soraLight(12)).foregroundColor(Sentia.ink2)
-                    Spacer()
-                    Chip(title: "Take back", chosen: false) { show.takeBack(fixture.id) }
-                }
-            } else {
-                HStack(spacing: 3) {
-                    ForEach(Array((show.live[fixture.id] ?? [.black]).enumerated()), id: \.offset) { _, c in
-                        RoundedRectangle(cornerRadius: 3).fill(c.color).frame(height: 14)
-                    }
-                }
-                HStack(spacing: 16) {
-                    Menu {
-                        Button("The open look (\(show.look.name))") { show.update(fixture.id) { $0.settings.lookID = nil } }
-                        Divider()
-                        ForEach(show.looks) { l in Button(l.name) { show.update(fixture.id) { $0.settings.lookID = l.id } } }
-                    } label: {
-                        Text(show.looks.first { $0.id == fixture.settings.lookID }?.name ?? "The open look")
-                            .font(.sora(12.5)).foregroundColor(Sentia.inkLight)
-                    }
-                    .menuStyle(.borderlessButton).fixedSize()
-                    .padding(.horizontal, 14).frame(height: 32)
-                    .overlay(Capsule().stroke(Sentia.line, lineWidth: 1.2))
-                    Spacer()
-                    Chip(title: "Hand to Alexa", chosen: false) { show.hold(fixture.id) }
-                }
-                SentiaSlider(label: "Brightness", low: .constant(0), high: brightness, bounds: 0...100, range: false, unit: "%")
-            }
-        }
-        .padding(16)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Sentia.line, lineWidth: 1))
-        .opacity(fixture.held ? 0.75 : 1)
     }
 }
 

@@ -8,8 +8,10 @@ and feeds it into the monitor's BNC input.
   artist side by side on one line underneath, on a flat background in the
   complementary colour of the cover's dominant hue. With the helper running
   on your Mac, the background becomes a visualizer glowing to the music (see
-  [Visualizer](#visualizer)). While the next cover downloads (two or three
-  seconds), its title shows on dark in the same place.
+  [Visualizer](#visualizer)). The next song in the queue has its cover
+  downloaded while the current one plays, so it shows the moment the song
+  changes; for a song that wasn't next (a skip to elsewhere), its title
+  shows on dark while the cover downloads (two or three seconds).
 - **Not playing:** the clock and date over a rotating set of screensavers,
   fading to the next every 20 minutes. Particle scenes, tinted from the
   last cover you played:
@@ -230,44 +232,58 @@ of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** 
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 - **Off:** the card's normal solid background, even with the app running.
 
-### Looks and Venue
+### Lights and Scenes
 
-Lights come along from the same analysis as the display, not a microphone. A **look** (the
-**Looks** page) sets how a light moves: a movement (Flow, Twinkle, Flexing, Stacking, Strike,
-Gradient, Chase, Pulse), colours (its own, chosen and removed one by one, the cover's or the
-display's scheme, in order or at random), spots and size (ranges, wider with louder music), speed,
-rhythm (brightness from quiet to the beat) and direction. Looks are saved as presets.
+Lights come along from the same analysis as the display, not a microphone. The **Lights** page
+shows every light found; pick one and set it on its own: on or off, brightness, **kick** (how much
+each kick flashes it, 0-150%) and its own **look**: a movement (Flow, Twinkle, Flexing, Stacking,
+Strike, Gradient, Chase, Pulse), colours (its own, chosen and removed one by one, the cover's or
+the display's scheme, in order or at random), spots and size (ranges, wider with louder music),
+speed, rhythm (brightness from quiet to the beat) and direction. A bulb has no segments, so it
+keeps colours, how often they change, and rhythm. **Presets** are looks saved to reuse: one click
+copies one into the open light, "Save as a preset" keeps the light's look, "Same on every light"
+copies it to the rest.
 
-The **Venue** page lists every light found, each with its own switch, look and brightness, and
-**scenes**: the whole room (each light's settings and the display's style) saved under a name and
-called back with one click. Everything lives in `~/Library/Application Support/Show Control`.
+The **Scenes** page saves the whole room (every light's look and settings, the display's style)
+under a name, called back with one click. Everything lives in
+`~/Library/Application Support/Show Control`.
 
 - **Govee** lamps are streamed a colour per segment (all 14 on the H6076). Turn on **LAN Control**
   for the lamp in the Govee Home app; the app finds it by itself.
-- **Matter** lights (bulbs already in Alexa or Apple Home) follow the bars and flash on kicks,
-  through `tools/showcontrol/matter` (needs Node): `npm install` there once, then pair each light
-  with the code from its home app's "share" or "add another controller":
-  `node lights.js pair 01234567890 bulb`. build.sh copies the helper to Application Support (macOS
-  keeps an app's helpers out of the Documents folder) and the app runs it from there; its output is
-  in `~/Library/Logs/Show Control/matter.log`.
+- **Matter** lights (bulbs already in Alexa or Apple Home) take a new colour every few beats and
+  flash on kicks, through `tools/showcontrol/matter` (needs Node): `npm install` there once, then
+  pair each light with the code from its home app's "share" or "add another controller":
+  `node lights.js pair 01234567890 bulb`. The helper sends a light one command at a time (a kick
+  first), so they can't pile up in the bulb, and reports each light's round trip. build.sh copies
+  it to Application Support (macOS keeps an app's helpers out of the Documents folder) and the app
+  runs it from there; its output is in `~/Library/Logs/Show Control/matter.log`.
 
-**Alexa keeps the last word.** When a light is turned off, set to a white or given another colour
-from outside the show (Alexa, a routine, its own app), the show lets go of it and leaves it alone,
-also after a restart, until **Take back** on the Venue page. **Hand to Alexa** lets go by hand.
-Ten seconds after the music stops, or when a light or the lamps are switched off or the app quits,
+**Alexa keeps the last word.** When a light is turned off, or set to a colour or a white from
+outside the show (Alexa, a routine, its own app), the show lets go of it and leaves it alone, also
+after a restart, until **Take back**. **Hand to Alexa** lets go by hand. A Matter light counts as
+taken when its colour mode changes: the show only ever sends hue and saturation, and Alexa sends
+colours and whites another way (the hue a bulb reports back drifts, so it isn't compared). Ten
+seconds after the music stops, or when a light or all lights are switched off or the app quits,
 every light the show still has goes back to its own colour and brightness.
 
-**On a phone:** the app serves the same controls (Venue, Looks, Display) on the home network; the
-Venue page shows the address and a six-digit code to enter once. In Safari, Share > Add to Home
-Screen makes it an app.
+**On a phone:** the app serves the same controls (Lights, Scenes, Display) on port 8770. Set a
+password on the Scenes page (10 characters or more); a phone signs in once and keeps a long random
+key (the Mac keeps only its hash). Five wrong tries lock sign-in for 30 s, doubling each time;
+"Sign out every phone" or a new password drops every key. In Safari, Share > Add to Home Screen
+makes it an app. `tools/showcontrol/site/deploy.sh` also puts it on the web: Tailscale Funnel gives
+this Mac a public HTTPS address (outgoing only, nothing opened on the router) and a Vercel project
+on `showcontrol.matiascevallos.com` passes every request to it. The page only answers while the Mac
+is awake with Show Control running.
 
 **Kicks drive everything:** they're found on the raw samples in the kick drum's own band
 (30-150 Hz) as sharp rises over a 5 ms average, against the tempo found from the last four
 seconds, so offbeat bass notes and noise don't count; snares and hats come through separately as
-accents (extra sparkle, never the pulse). A kick goes out about 7 ms after it lands. The music is
-captured before it reaches the speakers, so every output is held back by the speakers' own delay
-(read from Core Audio; Bluetooth adds a lot) less its own, and lands with the sound; "In time with
-the speakers" on the Display page trims it by ear.
+accents (extra sparkle, never the pulse). Every sound is timed by when Spotify played it (the
+capture's own timestamps), so a light flashes when the kick is *heard*: after the speakers' delay
+(Core Audio's figure plus "In time with the speakers"), less the light's own delay (30 ms for a
+Govee lamp, half the measured round trip for a Matter light). Once three kicks in a row fall on the
+beat, the next one is sent ahead, each light its own delay early, so even a slow bulb lands on it;
+a beat with no kick ends the run after one flash. The Lights page shows the measured delays.
 
 ```sh
 .venv/bin/python tools/showcontrol/make_icon.py   # only after changing the icon
@@ -357,7 +373,7 @@ playback starts it powers the signal back up and fades in, usually within
   sessions skip the expensive part of reconnecting. The trusted roots are
   compiled into flash (`src/trust_anchors.c`).
 - **Spotify:** polls `GET /me/player/currently-playing` every 3 s while
-  playing and every 5 s otherwise. The refresh token lives in flash, and
+  playing (and again just as the song should end) and every 5 s otherwise. The refresh token lives in flash, and
   Spotify-issued replacements are saved automatically.
 - **Covers:** first the 64 px thumbnail is downloaded and split into up to
   256 colours (a variance cut, in `buildArtPalette`). Then the 640 px JPEG
@@ -368,6 +384,14 @@ playback starts it powers the signal back up and fades in, usually within
   memory. The pixels and the palette live in a buffer allocated for
   instruction memory, packed four pixels to a 32-bit word. The cover fades
   by dimming its palette rather than by dithering.
+- **The next cover:** when a song starts, and again 40 s before it ends,
+  the first song in `GET /me/player/queue` is read (only that one: the rest
+  of the reply is never read) and its thumbnail and cover JPEGs are saved to
+  the spare 128 KB flash partition (`spiffs` in `min_spiffs.csv`, used raw;
+  the 300 px cover when the 640 px one won't fit). When that song comes, the
+  cover is decoded from flash, with no download. Erasing flash pauses the
+  render core, so the slot is erased one 4 KB sector at a time between polls
+  (`src/prefetch.cpp`).
 - **Pixel aspect:** each of the 256 pixels per line is ~1.27× wider than
   tall on a 4:3 picture. The cover is drawn 145×184 so it comes out square,
   and the fonts are pre-squeezed to match.

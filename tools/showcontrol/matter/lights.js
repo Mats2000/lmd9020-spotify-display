@@ -59,40 +59,56 @@ switch (command) {
         const all = new Map();  // id -> one light's part and show state
         for (const peer of lights()) {
             await peer.start();
-            all.set(peer.id, { part: lightPart(peer), busy: false, next: null, saved: null, driving: false, released: false, sent: [] });
+            all.set(peer.id, { part: lightPart(peer), busy: false, next: null, after: null, saved: null, driving: false, released: false, trip: 0 });
             console.log(`Ready: ${peer.id}`);
         }
         const targets = cmd => cmd.id ? [all.get(cmd.id)].filter(Boolean) : [...all.values()];
 
-        const apply = async (light, cmd, isKick = false) => {
-            if (!isKick) light.busy = true;
+        // One command at a time per light, so they can't pile up in the bulb: while one is under way
+        // only the latest waits (a kick wins over a level, and the level waits behind it).
+        const timed = async (light, run) => {
+            const t = Date.now();
+            await run();
+            const ms = Date.now() - t;
+            light.trip = light.trip ? light.trip + (ms - light.trip) * 0.2 : ms;
+        };
+        const apply = async (light, cmd) => {
+            light.busy = true;
             const part = light.part, fade = Math.round((cmd.fade ?? 0.3) * 10);  // tenths of a second
             try {
                 if (cmd.level !== undefined && part.stateOf(LevelControlClient) !== undefined) {
                     const level = Math.max(1, Math.min(254, Math.round(cmd.level * 254)));
-                    light.sent.push({ level, at: Date.now() });
-                    await part.commandsOf(LevelControlClient).moveToLevelWithOnOff({
+                    await timed(light, () => part.commandsOf(LevelControlClient).moveToLevelWithOnOff({
                         level, transitionTime: fade, optionsMask: {}, optionsOverride: {},
-                    });
+                    }));
                 }
                 if (cmd.r !== undefined && part.stateOf(ColorControlClient) !== undefined) {
                     const hs = rgbToHueSat(cmd.r, cmd.g, cmd.b);
-                    light.sent.push({ hue: hs.hue, at: Date.now() });
-                    await part.commandsOf(ColorControlClient).moveToHueAndSaturation({
+                    await timed(light, () => part.commandsOf(ColorControlClient).moveToHueAndSaturation({
                         ...hs, transitionTime: fade, optionsMask: {}, optionsOverride: {},
-                    });
+                    }));
                 }
             } catch (e) {
                 console.error(`${e}`);
             }
-            if (isKick) return;
             light.busy = false;
-            if (light.next && light.driving) {  // only the latest waiting command: late ones are stale
-                const n = light.next;
-                light.next = null;
-                apply(light, n);
-            }
+            const n = light.next ?? light.after;
+            if (n === light.next) light.next = light.after, light.after = null;
+            else light.after = null;
+            if (n && light.driving) apply(light, n);
+            else light.next = light.after = null;
         };
+        const queue = (light, cmd) => {
+            if (!light.busy) return apply(light, cmd);
+            if (cmd.kick) {
+                if (light.next && !light.next.kick) light.after = light.next;
+                light.next = cmd;
+            } else if (light.next?.kick) light.after = cmd;
+            else light.next = cmd;
+        };
+        setInterval(() => {
+            for (const [id, light] of all) if (light.trip) console.log(`Lag: ${id} ${Math.round(light.trip)}`);
+        }, 5000);
 
         // Each light as it was before the show, put back after it (and when the app quits).
         const save = light => {
@@ -108,7 +124,7 @@ switch (command) {
         };
         const restore = async light => {
             light.driving = false;
-            light.next = null;
+            light.next = light.after = null;
             const s = light.saved;
             light.saved = null;
             if (!s || light.released) return;
@@ -129,30 +145,25 @@ switch (command) {
             light.released = true;
             light.driving = false;
             light.saved = null;  // the light is someone else's now: nothing to put back
-            light.next = null;
+            light.next = light.after = null;
             console.log(`Released: ${id} ${why}`);
         };
 
         // Someone else (Alexa, a routine, the switch) changed a light mid-show: let it go until the app
-        // takes it back. Off, a white temperature, or a hue the show didn't send.
+        // takes it back. Off, or a colour or white set another way than the show's hue and saturation
+        // (the hue the bulb reports back drifts from the one sent, so it isn't compared).
         setInterval(() => {
-            const now = Date.now();
             for (const [id, light] of all) {
-                light.sent = light.sent.filter(x => now - x.at < 6000);
                 if (!light.driving || light.released) continue;
                 const p = light.part, on = p.stateOf(OnOffClient)?.onOff, c = p.stateOf(ColorControlClient);
                 if (on === true) light.seenOn = true;
                 if (light.seenOn && on === false) { release(id, light, "off"); continue; }
                 if (!c) continue;
                 if (c.colorMode === 0) light.seenHue = true;
-                if (light.seenHue && c.colorMode === 2) { release(id, light, "white"); continue; }
-                const hues = light.sent.filter(x => x.hue !== undefined);
-                const lastHueAt = Math.max(0, ...hues.map(x => x.at));
-                const far = h => Math.min(Math.abs(h - c.currentHue), 254 - Math.abs(h - c.currentHue)) > 25;
-                if (light.seenHue && c.colorMode === 0 && hues.length && now - lastHueAt > 1500 && hues.every(x => far(x.hue)))
-                    release(id, light, "colour");
+                if (light.seenHue && c.colorMode === 2) release(id, light, "white");
+                else if (light.seenHue && c.colorMode === 1) release(id, light, "colour");
             }
-        }, 700);
+        }, 500);
 
         for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, async () => {
             await Promise.race([Promise.all([...all.values()].map(restore)), new Promise(r => setTimeout(r, 3000))]);
@@ -172,9 +183,7 @@ switch (command) {
                     if (light.released) console.log(`Taken: ${id}`);
                     light.released = false;
                 } else if (!light.driving || light.released) continue;  // nothing drives a light outside its show
-                else if (cmd.kick) apply(light, cmd, true);  // a kick goes now, alongside whatever is under way
-                else if (light.busy) light.next = cmd;
-                else apply(light, cmd);
+                else queue(light, cmd);
             }
         });
         sock.bind(4005, "127.0.0.1");

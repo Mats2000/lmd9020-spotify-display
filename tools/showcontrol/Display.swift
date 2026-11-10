@@ -3,6 +3,7 @@
 
 import AppKit
 import CoreAudio
+import CoreMedia
 import Foundation
 
 // Learns the display's address from its broadcast ("LMD9020 1" every 2 s), then sends it
@@ -90,15 +91,23 @@ enum Sync {
         return speakers
     }
 
+    // How long the captured sound takes to reach the app (measured on every buffer).
+    static var captureLag = 0.0
+    // The clock capture timestamps are on, in seconds.
+    static var now: Double { CMClockGetTime(CMClockGetHostTimeClock()).seconds }
+
     // Runs `work` once the sound has caught up, given how long this output takes itself.
     static func later(own: Double, _ work: @escaping () -> Void) {
-        let wait = speakerDelay + trim - own
+        let wait = speakerDelay + trim - own - captureLag
         if wait <= 0.002 {
             work()
         } else {
             queue.asyncAfter(deadline: .now() + wait, execute: work)
         }
     }
+
+    // When a sound Spotify played at `played` (capture clock) is heard.
+    static func heard(_ played: Double) -> Double { played + speakerDelay + trim }
 
     private static func outputLatency() -> Double {
         var device = AudioObjectID(0)

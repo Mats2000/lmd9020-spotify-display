@@ -1,5 +1,5 @@
 // The show: what the window (and the phone page) shows and changes. The display's style and
-// colours, the looks, every light's own settings, and scenes.
+// colours, every light with its own look and settings, the saved looks (presets), and scenes.
 
 import AppKit
 import ServiceManagement
@@ -9,7 +9,7 @@ let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava", "Rave", "Fractal
 let schemes = ["Cover Colours", "Sentia", "Ice", "Amber", "Soft Club"]  // ColourScheme order
 
 final class Show: ObservableObject {
-    enum Page: String, CaseIterable { case display = "Display", looks = "Looks", venue = "Venue", tiles = "TILES" }
+    enum Page: String, CaseIterable { case display = "Display", lights = "Lights", scenes = "Scenes", tiles = "TILES" }
 
     @Published var page: Page = Page(rawValue: UserDefaults.standard.string(forKey: "page") ?? "") ?? .display {
         didSet { UserDefaults.standard.set(page.rawValue, forKey: "page"); wantFrames() }
@@ -17,8 +17,8 @@ final class Show: ObservableObject {
     @Published var styleName: String { didSet { UserDefaults.standard.set(styleName, forKey: "styleName"); applyStyle() } }
     @Published var schemeName: String { didSet { UserDefaults.standard.set(schemeName, forKey: "schemeName"); applyStyle() } }
     @Published var lampsOn: Bool { didSet { UserDefaults.standard.set(lampsOn, forKey: "lights"); pushPlan() } }
-    @Published var looks: [LampLook] { didSet { LookStore.save(looks); pushPlan() } }
-    @Published var lookID: UUID { didSet { UserDefaults.standard.set(lookID.uuidString, forKey: "look"); pushPlan() } }
+    @Published var looks: [LampLook] { didSet { LookStore.save(looks) } }  // the presets
+    @Published var selected: String? { didSet { UserDefaults.standard.set(selected, forKey: "light"); pushPlan() } }
     @Published var fixtures: [Fixture] = [] { didSet { saveVenue(); pushPlan() } }
     @Published var scenes: [ShowScene] { didSet { saveVenue() } }
     @Published var trimMs: Int { didSet { UserDefaults.standard.set(trimMs, forKey: "trim"); Sync.trim = Double(trimMs) / 1000 } }
@@ -31,14 +31,18 @@ final class Show: ObservableObject {
     @Published var needsPermission = false
     @Published var displayAddress: String?
     @Published var webAddress: String?
-    @Published var webCode = ""
+    @Published var hasPassword = WebAuth.shared.hasPassword
+    @Published var phonesSignedIn = WebAuth.shared.keys.count
+    let publicAddress = UserDefaults.standard.string(forKey: "publicAddress") ?? "https://showcontrol.matiascevallos.com"
     @Published var speakerMs = 0
+    @Published var timing = Rig.Timing()
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
 
-    // The look open on the Looks page.
+    // The light open on the Lights page, and its look.
+    var light: Fixture? { fixtures.first { $0.id == selected } ?? fixtures.first }
     var look: LampLook {
-        get { looks.first { $0.id == lookID } ?? looks[0] }
-        set { if let i = looks.firstIndex(where: { $0.id == newValue.id }) { looks[i] = newValue } }
+        get { light?.settings.look ?? LampLook.builtIn[0] }
+        set { if let id = light?.id { update(id) { $0.settings.look = newValue } } }
     }
 
     private let link: Link
@@ -60,9 +64,8 @@ final class Show: ObservableObject {
         styleName = d.string(forKey: "styleName") ?? styles[0]
         schemeName = d.string(forKey: "schemeName") ?? schemes[0]
         lampsOn = d.object(forKey: "lights") as? Bool ?? true
-        let saved = LookStore.load()
-        looks = saved
-        lookID = UUID(uuidString: d.string(forKey: "look") ?? "").flatMap { id in saved.first { $0.id == id }?.id } ?? saved[0].id
+        looks = LookStore.load()
+        selected = d.string(forKey: "light")
         trimMs = d.integer(forKey: "trim")
         Sync.trim = Double(d.integer(forKey: "trim")) / 1000
         scenes = venue.scenes
@@ -73,9 +76,9 @@ final class Show: ObservableObject {
         analyzer = Analyzer { packet in Sync.later(own: displayOwn) { link.send(packet) } }
         capture = Capture(analyzer: analyzer)
         rig = Rig(analyzer: analyzer)
-        analyzer.onKick = { [weak self] s in
+        analyzer.onKick = { [weak self] s, played, period in
             self?.analyzer.sendKick()
-            self?.rig.kick(s)
+            self?.rig.kick(s, played: played, period: period)
         }
         analyzer.onAccent = { [weak self] s in self?.rig.accent(s) }
         applyStyle()
@@ -85,6 +88,7 @@ final class Show: ObservableObject {
             self?.previewSegments = preview
         }
         rig.onHeld = { [weak self] id in self?.hold(id) }
+        rig.onTiming = { [weak self] t in if self?.timing != t { self?.timing = t } }
         rig.govee.onFound = { [weak self] in self?.refreshFixtures() }
         watcher.onNewTrack = { [weak self] track, image in
             guard let self else { return }
@@ -211,38 +215,61 @@ final class Show: ObservableObject {
         }
     }
 
+    // MARK: Phone page
+
+    func setPassword(_ p: String) -> Bool {
+        let ok = WebAuth.shared.setPassword(p)
+        refreshWeb()
+        return ok
+    }
+    func signOutPhones() {
+        WebAuth.shared.signOutAll()
+        refreshWeb()
+    }
+    func refreshWeb() {
+        hasPassword = WebAuth.shared.hasPassword
+        phonesSignedIn = WebAuth.shared.keys.count
+    }
+
     func setOpenAtLogin(_ on: Bool) {
         if on { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
         openAtLogin = SMAppService.mainApp.status == .enabled
     }
 
-    // MARK: Looks
+    // MARK: Looks (presets): copied into a light, saved from one
 
-    func saveAsNew() {
-        var copy = look
+    func loadPreset(_ preset: UUID, into id: String? = nil) {
+        guard let p = looks.first(where: { $0.id == preset }), let id = id ?? light?.id else { return }
+        update(id) { $0.settings.look = p }
+    }
+
+    func savePreset(from id: String? = nil) {
+        guard let f = id.flatMap({ i in fixtures.first { $0.id == i } }) ?? light else { return }
+        var copy = f.settings.look
         copy.id = UUID()
-        copy.name = "My look \(looks.count + 1)"
+        if looks.contains(where: { $0.name == copy.name }) { copy.name = "\(copy.name) \(looks.count + 1)" }
         looks.append(copy)
-        lookID = copy.id
+        update(f.id) { $0.settings.look = copy }
     }
 
-    func deleteLook(_ id: UUID? = nil) {
-        let gone = id ?? lookID
-        guard looks.count > 1, let i = looks.firstIndex(where: { $0.id == gone }) else { return }
-        looks.remove(at: i)
-        if lookID == gone { lookID = looks[max(0, i - 1)].id }
-        for k in fixtures.indices where fixtures[k].settings.lookID == gone { fixtures[k].settings.lookID = nil }
+    func deletePreset(_ id: UUID) {
+        guard looks.count > 1 else { return }
+        looks.removeAll { $0.id == id }
     }
 
-    // The open look on every light.
-    func useOnAll() {
-        for k in fixtures.indices { fixtures[k].settings.lookID = lookID }
+    // This light's look on every light.
+    func sameOnAll(from id: String? = nil) {
+        guard let f = id.flatMap({ i in fixtures.first { $0.id == i } }) ?? light else { return }
+        for k in fixtures.indices { fixtures[k].settings.look = f.settings.look }
     }
+
+    // Which preset a look is, if it's one unchanged.
+    func preset(of l: LampLook) -> UUID? { looks.first { $0 == l }?.id }
 
     // MARK: Venue
 
     private func wantFrames() {
-        rig.wantsFrames = (windowVisible && (page == .looks || page == .venue)) || Date().timeIntervalSince(phoneWatching) < 5
+        rig.wantsFrames = (windowVisible && (page == .lights || page == .scenes)) || Date().timeIntervalSince(phoneWatching) < 5
     }
 
     // The lights found so far, each with its saved settings.
@@ -257,7 +284,11 @@ final class Show: ObservableObject {
             if let old = fixtures.first(where: { $0.id == id }) {
                 found[k] = old
             } else {
-                found[k].settings = venue.fixtures[id] ?? FixtureSettings()
+                found[k].settings = venue.fixtures[id] ?? {
+                    var s = FixtureSettings()
+                    s.look = looks.first ?? LampLook.builtIn[0]
+                    return s
+                }()
                 found[k].name = venue.names[id] ?? found[k].name
                 found[k].held = heldIDs.contains(id)
             }
@@ -313,8 +344,8 @@ final class Show: ObservableObject {
     private func pushPlan() {
         var p = Rig.Plan()
         p.fixtures = fixtures
-        p.looks = Dictionary(uniqueKeysWithValues: looks.map { ($0.id, $0) })
-        p.editing = look
+        p.preview = look
+        p.previewSegments = light.map { $0.kind == .govee ? $0.segments : 1 } ?? 14
         p.lampsOn = lampsOn
         rig.set(p)
     }

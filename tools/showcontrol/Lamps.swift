@@ -120,8 +120,9 @@ final class LampEngine {
     // The length the movement is drawn on: the whole lamp, or half of it mirrored (in, out).
     private var span: Int { look.direction == .inward || look.direction == .outward ? (count + 1) / 2 : count }
 
-    func kick(_ strength: Float) {
-        flash = max(flash, 0.55 + 0.45 * Double(strength))
+    // amount: the light's own kick setting (1 is a full flash, 0 none, the movement still steps).
+    func kick(_ strength: Float, amount: Double = 1) {
+        flash = max(flash, (0.55 + 0.45 * Double(strength)) * amount)
         beats += 1
         switch look.movement {
         case .twinkle:  // a new spot or two lands on the kick
@@ -417,14 +418,23 @@ final class GoveeLamps {
 
 // Matter lights through matter/lights.js (Node and matter.js): it is paired once as an extra
 // controller (`node lights.js pair <code>`), then run here and sent {"r","g","b","level","fade"} on
-// UDP 127.0.0.1:4005. A light takes 60-400 ms a command, so it follows bars and kicks, not frames:
-// kicks go out at once ("kick": true runs alongside a colour change rather than after it).
+// UDP 127.0.0.1:4005. A light takes 40-400 ms a command, so it follows beats and kicks, not frames;
+// the helper reports each light's round trip ("Lag: <id> <ms>") so its kicks can be sent that much early.
 final class MatterLights {
     private var process: Process?
     private let sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
     private(set) var names: [String] = []
     private(set) var running = false
     var onReleased: ((String) -> Void)?  // someone else (Alexa) took this light
+    private let lock = NSLock()
+    private var trips: [String: Double] = [:]
+
+    // How long a light takes to show a command (half the round trip, and a little for the bulb).
+    func own(_ id: String) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return min(0.4, (trips[id] ?? 0.2) / 2 + 0.02)
+    }
 
     static var helper: URL? {
         // The project's matter/ folder (its node_modules are too big to copy into the app).
@@ -459,6 +469,13 @@ final class MatterLights {
                 if line.hasPrefix("Ready: ") {
                     let name = String(line.dropFirst(7))
                     DispatchQueue.main.async { if !(self?.names.contains(name) ?? true) { self?.names.append(name) } }
+                } else if line.hasPrefix("Lag: ") {
+                    let parts = line.split(separator: " ")
+                    if parts.count == 3, let ms = Double(parts[2]) {
+                        self?.lock.lock()
+                        self?.trips[String(parts[1])] = ms / 1000
+                        self?.lock.unlock()
+                    }
                 } else if line.hasPrefix("Released: ") {
                     let name = String(line.dropFirst(10).split(separator: " ").first ?? "")
                     DispatchQueue.main.async { self?.onReleased?(name) }

@@ -43,8 +43,10 @@ final class Analyzer {
     private var colours: UInt8 = 0
     private var on = true
 
-    // A kick (strength 0...1), the moment it's heard: called on the audio thread.
-    var onKick: ((Float) -> Void)?
+    // A kick, the moment it's found (on the audio thread): its strength 0...1, when Spotify played
+    // it (capture clock, see Sync.now), and the beat's period in seconds once the tempo is sure (else 0).
+    var onKick: ((_ strength: Float, _ played: Double, _ period: Double) -> Void)?
+    private var sampleTime = 0.0  // when the sample being looked at was played
 
     var style: UInt8 {  // the visualizer the display should draw
         get { lock.lock(); defer { lock.unlock() }; return chosen }
@@ -182,7 +184,9 @@ final class Analyzer {
             kickLevel = kickLevel == 0 ? armedEnergy : kickLevel + (armedEnergy - kickLevel) * 0.25
             sinceKick = 0
             beat = 1
-            onKick?(min(1, sqrtf(armedEnergy / max(kickLevel, 1e-9)) * 0.8) * min(1, 0.55 + armedBest / 40))
+            // Its start: the armed slices and the 5 ms average back.
+            onKick?(min(1, sqrtf(armedEnergy / max(kickLevel, 1e-9)) * 0.8) * min(1, 0.55 + armedBest / 40),
+                    sampleTime - 6 * slice, tempoSure ? beatPeriod : 0)
             return
         }
         kickLevel *= Float(exp(-slice / 8))  // forgets slowly, so a quieter section is still heard
@@ -245,10 +249,13 @@ final class Analyzer {
         nextBeat = clock - Double(phase) * bin
     }
 
-    func push(_ samples: [Float], rate: Double) {
+    // played: when the first sample was played (capture clock).
+    func push(_ samples: [Float], rate: Double, played: Double) {
         sampleRate = rate
         let hop = Int(rate / updatesPerSecond)
+        sampleTime = played
         for s in samples {
+            sampleTime += 1 / rate
             ring[at] = s
             at = (at + 1) % fftSize
             kick(s)
@@ -403,7 +410,14 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                 mono = (0..<frames).map { i in (0..<channels).reduce(0) { $0 + p[i * channels + $1] } / Float(channels) }
             }
         }
-        if !mono.isEmpty { analyzer.push(mono, rate: asbd.mSampleRate) }
+        guard !mono.isEmpty else { return }
+        // The buffer's timestamp is when Spotify played it; how long ago that was is the capture's lag.
+        let now = Sync.now, length = Double(mono.count) / asbd.mSampleRate
+        let pts = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+        let lag = now - pts - length
+        let played = pts.isFinite && lag > -0.05 && lag < 1.5 ? pts : now - length
+        if played == pts { Sync.captureLag += (max(0, lag) - Sync.captureLag) * 0.05 }
+        analyzer.push(mono, rate: asbd.mSampleRate, played: played)
     }
 
     func stop() async {

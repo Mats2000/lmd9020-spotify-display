@@ -48,7 +48,7 @@ input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; hei
 input[type=range]::-webkit-slider-runnable-track { height: 2px; background: var(--line); }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -10px; border-radius: 50%;
   background: var(--ink); border: 1.6px solid var(--peri); }
-select, input[type=text] { font: 400 14px Sora, sans-serif; color: var(--text); background: var(--ink); border: 1px solid var(--line);
+select, input[type=text], input[type=password] { font: 400 14px Sora, sans-serif; color: var(--text); background: var(--ink); border: 1px solid var(--line);
   border-radius: 12px; height: 40px; padding: 0 12px; width: 100%; }
 .swatches { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 14px 0; }
 .sw { position: relative; width: 40px; height: 40px; }
@@ -63,23 +63,35 @@ select, input[type=text] { font: 400 14px Sora, sans-serif; color: var(--text); 
 .held-note { color: var(--ink2); font-size: 12px; }
 nav { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; gap: 6px;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--ink); border-top: 1px solid var(--line); }
+nav[hidden] { display: none; }
 nav button { flex: 1; max-width: 170px; height: 44px; font: 400 14px Sora, sans-serif; color: var(--ink2); background: none; border: 0; border-radius: 12px; }
 nav button.on { color: var(--text); background: var(--panel); }
-.gate { margin-top: 30vh; text-align: center; }
-.gate input { text-align: center; font-size: 22px; letter-spacing: .3em; max-width: 220px; margin: 16px auto; display: block; }
+.gate { margin-top: 26vh; text-align: center; }
+.gate input { text-align: center; max-width: 280px; margin: 18px auto 12px; display: block; }
+.gate .btn { margin: 0 auto; }
+.lights { display: flex; gap: 10px; overflow-x: auto; margin: 0 -16px; padding: 4px 16px 2px; scrollbar-width: none; }
+.lights::-webkit-scrollbar { display: none; }
+.light { flex: none; width: 150px; text-align: left; border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: none; color: var(--text); font: 300 12px Sora, sans-serif; }
+.light.on { border-color: var(--peri); background: var(--panel); }
+.light .name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.light .kind { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.light .strip { margin: 8px 0 0; height: 8px; }
+.light .strip i { border-radius: 2px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); flex: none; }
+.dot.on { background: var(--peri); }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <nav id="nav" hidden>
-  <button data-tab="venue">Venue</button><button data-tab="looks">Looks</button><button data-tab="display">Display</button>
+  <button data-tab="lights">Lights</button><button data-tab="scenes">Scenes</button><button data-tab="display">Display</button>
 </nav>
 <script>
 "use strict";
-let code = "";
-try { code = localStorage.getItem("showCode") || ""; } catch (e) {}
-let tab = "venue";
-try { tab = localStorage.getItem("showTab") || "venue"; } catch (e) {}
+const store = { get: k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+let key = store.get("showKey"), tab = store.get("showTab") || "lights", picked = store.get("showLight");
+if (!["lights", "scenes", "display"].includes(tab)) tab = "lights";
 let state = null, shape = "", busyUntil = 0;
 const app = document.getElementById("app"), nav = document.getElementById("nav");
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -87,140 +99,138 @@ const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const SOURCE = { own: "These colours", cover: "Cover", scheme: "Display colours" };
 
 async function call(path, body) {
-  const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "X-Show-Code": code, "Content-Type": "application/json" },
+  const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "X-Show-Key": key, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined });
-  if (r.status === 401) { gate(true); return null; }
-  return r.json();
+  if (r.status === 401) { key = ""; store.set("showKey", ""); gate(""); return null; }
+  return r.ok ? r.json() : null;
 }
 async function act(body) { busyUntil = Date.now() + 600; const s = await call("/api/do", body); if (s) show(s); }
 async function poll() {
-  if (document.visibilityState === "visible" && code) {
+  if (document.visibilityState === "visible" && key) {
     try { const s = await call("/api/state"); if (s && Date.now() > busyUntil) show(s); } catch (e) {}
   }
   setTimeout(poll, 700);
 }
 
-function gate(wrong) {
+function gate(note) {
   nav.hidden = true; shape = "";
-  app.innerHTML = `<div class="gate"><h1>Show Control</h1><p class="sub">${wrong && code ? "That code didn't work. " : ""}Enter the code from the Venue page on the Mac.</p>
-    <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>`;
-  const i = document.getElementById("code");
-  i.focus();
-  i.oninput = () => { if (i.value.length === 6) { code = i.value; try { localStorage.setItem("showCode", code); } catch (e) {} start(); } };
+  app.innerHTML = `<form class="gate" id="gate"><h1>Show Control</h1><p class="sub">${esc(note || "Sign in with the password set on the Mac, under Scenes.")}</p>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Password"><button class="btn">Sign in</button></form>`;
+  document.getElementById("gate").onsubmit = async e => {
+    e.preventDefault();
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: document.getElementById("pw").value }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.key) { key = j.key; store.set("showKey", key); start(); }
+    else gate(r.status === 429 ? "Too many tries. Wait a little, then try again." : r.status === 403 ? "Set a password on the Mac first, under Scenes." : "That password didn't work.");
+  };
 }
 async function start() { const s = await call("/api/state"); if (s) { nav.hidden = false; show(s); } }
 
-const strip = cs => `<div class="strip">${(cs.length ? cs : ["#000000"]).slice().map(c => `<i style="background:${c}"></i>`).join("")}</div>`;
-const sw = (on, a) => `<button class="switch${on ? " on" : ""}" data-act='${esc(JSON.stringify(a))}'></button>`;
-const chip = (label, on, a) => `<button class="chip${on ? " on" : ""}" data-act='${esc(JSON.stringify(a))}'>${esc(label)}</button>`;
-const slider = (label, key, v, min, max, unit, a) =>
-  `<label class="slider"><span>${label}<b>${v}${unit}</b></span><input type="range" min="${min}" max="${max}" value="${v}" data-key="${key}" data-base='${esc(JSON.stringify(a))}'></label>`;
+const strip = (cs, attr = "") => `<div class="strip"${attr}>${(cs.length ? cs : ["#000000"]).map(c => `<i style="background:${c}"></i>`).join("")}</div>`;
+const data = a => `data-act='${esc(JSON.stringify(a))}'`;
+const sw = (on, a) => `<button class="switch${on ? " on" : ""}" ${data(a)}></button>`;
+const chip = (label, on, a) => `<button class="chip${on ? " on" : ""}" ${data(a)}>${esc(label)}</button>`;
+const slider = (label, k, v, min, max, unit, a) =>
+  `<label class="slider"><span>${label}<b>${v}${unit}</b></span><input type="range" min="${min}" max="${max}" value="${v}" data-key="${k}" data-unit="${unit}" data-base='${esc(JSON.stringify(a))}'></label>`;
+const current = s => s.fixtures.find(f => f.id === picked) || s.fixtures[0];
 
 function show(s) {
   state = s;
-  const look = s.looks.find(l => l.id === s.lookID) || s.looks[0];
-  const key = [tab, s.fixtures.map(f => f.id + f.held + f.on + f.lookID).join(), s.looks.map(l => l.id + l.name).join(), s.scenes.map(x => x.id).join(),
-    s.lookID, look.colours.join(), look.source, look.movement, look.direction, look.random, s.style, s.scheme, s.lampsOn].join("|");
+  const f = current(s), l = f && f.look;
+  const k = [tab, s.fixtures.map(x => x.id + x.held + x.on + x.name + x.look.name + x.preset).join(), s.presets.map(p => p.id + p.name).join(),
+    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick].join(), l && JSON.stringify(l), s.style, s.scheme, s.lampsOn].join("|");
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === tab);
-  if (key !== shape) { shape = key; render(s, look); return; }
-  // Same layout: only the live parts and values not being touched.
-  for (const [i, f] of s.fixtures.entries()) {
-    const el = document.querySelector(`[data-live="${i}"]`);
-    if (el) el.outerHTML = strip(f.colours).replace('class="strip"', `class="strip" data-live="${i}"`);
-  }
-  const p = document.querySelector("[data-preview]");
-  if (p) p.outerHTML = strip(s.preview).replace('class="strip"', 'class="strip" data-preview');
+  if (k !== shape) { shape = k; render(s); return; }
+  for (const x of s.fixtures) for (const el of document.querySelectorAll(`[data-live="${CSS.escape(x.id)}"]`)) el.outerHTML = strip(x.colours, ` data-live="${esc(x.id)}"`);
   const np = document.querySelector("[data-np]");
   if (np) np.textContent = s.title ? `${s.title} · ${s.artist}` : s.status;
 }
 
-function render(s, look) {
-  const np = `<p class="sub" data-np>${esc(s.title ? `${s.title} · ${s.artist}` : s.status)}</p>`;
-  if (tab === "venue") {
-    let h = `<h1>Venue</h1>${np}<div class="row" style="margin-top:18px"><span class="grow">Lamps follow the music</span>${sw(s.lampsOn, { action: "lamps", on: !s.lampsOn })}</div><h2>Lights</h2>`;
-    if (!s.fixtures.length) h += `<p class="sub">Looking for lights…</p>`;
-    s.fixtures.forEach((f, i) => {
-      const opts = `<option value="">The open look (${esc(look.name)})</option>` + s.looks.map(l => `<option value="${l.id}"${l.id === f.lookID ? " selected" : ""}>${esc(l.name)}</option>`).join("");
-      h += `<div class="card${f.held ? " held" : ""}"><div class="row"><div class="grow"><div class="name">${esc(f.name)}</div>
-        <div class="kind">${f.kind === "govee" ? `Govee · ${f.segments} segments` : "Matter light"}</div></div>${f.held ? "" : sw(f.on, { action: "fixture", id: f.id, on: !f.on })}</div>`;
-      if (f.held) {
-        h += `<div class="row" style="margin-top:12px"><span class="grow held-note">Alexa has it. The show leaves it alone.</span><button class="btn small" data-act='${esc(JSON.stringify({ action: "take", id: f.id }))}'>Take back</button></div></div>`;
-        return;
-      }
-      h += strip(f.colours).replace('class="strip"', `class="strip" data-live="${i}"`);
-      h += `<select data-fixture="${esc(f.id)}">${opts}</select>`;
-      h += slider("Brightness", "brightness", f.brightness, 0, 100, "%", { action: "fixture", id: f.id });
-      h += `<div class="row" style="margin-top:10px"><span class="grow"></span><button class="btn small" data-act='${esc(JSON.stringify({ action: "hold", id: f.id }))}'>Hand to Alexa</button></div></div>`;
-    });
-    h += `<h2>Scenes</h2><div class="list">`;
-    for (const sc of s.scenes) h += `<div class="row"><button class="grow" data-act='${esc(JSON.stringify({ action: "sceneRecall", id: sc.id }))}'>${esc(sc.name)}</button>
-      <button class="btn small" style="width:auto" data-act='${esc(JSON.stringify({ action: "sceneDelete", id: sc.id }))}'>Delete</button></div>`;
-    h += `</div><div class="row" style="margin-top:12px"><input type="text" id="sceneName" placeholder="Scene name" class="grow"><button class="btn" id="sceneSave">Save scene</button></div>`;
-    app.innerHTML = h;
-  } else if (tab === "looks") {
-    const base = { action: "look", id: look.id };
-    let h = `<h1>Looks</h1>${np}<h2>Looks</h2><div class="chips">${s.looks.map(l => chip(l.name, l.id === look.id, { action: "open", id: l.id })).join("")}</div>`;
-    h += strip(s.preview).replace('class="strip"', 'class="strip" data-preview');
-    h += `<input type="text" id="lookName" value="${esc(look.name)}">`;
-    h += `<h2>Movement</h2><div class="chips">${s.movements.map(m => chip(cap(m), m === look.movement, { ...base, movement: m })).join("")}</div>`;
-    h += `<h2>Colours</h2><div class="chips">${s.sources.map(m => chip(SOURCE[m], m === look.source, { ...base, source: m })).join("")}</div>`;
-    if (look.source === "own") {
-      h += `<div class="swatches">${look.colours.map((c, i) => `<div class="sw"><input type="color" value="${c}" data-colour="${i}">${look.colours.length > 1 ? `<button class="x" data-remove="${i}">×</button>` : ""}</div>`).join("")}
-        ${look.colours.length < 6 ? `<button class="add" id="addColour">+</button>` : ""}</div>`;
-    }
-    h += `<div class="chips" style="margin-top:12px">${chip("In order", !look.random, { ...base, random: false })}${chip("Random", look.random, { ...base, random: true })}</div>`;
-    h += slider("Spots from", "spotsLow", look.spotsLow, 1, 8, "", base) + slider("Spots to", "spotsHigh", look.spotsHigh, 1, 8, "", base);
-    h += slider("Size from", "sizeLow", look.sizeLow, 1, 10, "", base) + slider("Size to", "sizeHigh", look.sizeHigh, 1, 10, "", base);
-    h += slider("Speed", "speed", look.speed, 1, 5, "", base);
-    h += slider("Rhythm quiet", "rhythmLow", look.rhythmLow, 0, 100, "%", base) + slider("Rhythm on the beat", "rhythmHigh", look.rhythmHigh, 0, 100, "%", base);
-    h += `<h2>Direction</h2><div class="chips">${s.directions.map(d => chip(cap(d), d === look.direction, { ...base, direction: d })).join("")}</div>`;
-    h += `<div class="chips" style="margin-top:26px">${chip("Save as new", false, { action: "lookNew" })}${chip("Use on all lights", false, { action: "useOnAll" })}${s.looks.length > 1 ? chip("Delete", false, { action: "lookDelete", id: look.id }) : ""}</div>`;
-    app.innerHTML = h;
-  } else {
-    let h = `<h1>Display</h1>${np}<h2>Visualizer</h2><div class="list">${s.styles.map(x => `<button class="${x === s.style ? "on" : ""}" data-act='${esc(JSON.stringify({ action: "display", style: x }))}'>${esc(x)}</button>`).join("")}</div>`;
-    h += `<h2>Colours</h2><div class="list">${s.schemes.map(x => `<button class="${x === s.scheme ? "on" : ""}" data-act='${esc(JSON.stringify({ action: "display", scheme: x }))}'>${esc(x)}</button>`).join("")}</div>`;
-    app.innerHTML = h;
+function lightsTab(s) {
+  let h = "";
+  if (!s.fixtures.length) return h + `<p class="sub">Looking for lights…</p>`;
+  h += `<div class="lights">${s.fixtures.map(x => `<button class="light${x.id === current(s).id ? " on" : ""}" data-pick="${esc(x.id)}">
+    <div class="row"><span class="name grow">${esc(x.name)}</span><span class="dot${x.on && !x.held ? " on" : ""}"></span></div>
+    <div class="kind">${esc(x.held ? "Alexa has it" : x.on ? x.look.name : "Off")}</div>${strip(x.colours, ` data-live="${esc(x.id)}"`)}</button>`).join("")}</div>`;
+  const f = current(s), l = f.look, id = f.id, base = { action: "look", id }, strip_ = f.kind === "govee";
+  h += `<div class="row" style="margin-top:24px"><div class="grow"><div class="name">${esc(f.name)}</div>
+    <div class="kind">${f.kind === "govee" ? `Govee · ${f.segments} segments` : "Matter light"}</div></div>${f.held ? "" : sw(f.on, { action: "fixture", id, on: !f.on })}</div>`;
+  if (f.held) {
+    return h + `<div class="row" style="margin-top:14px"><span class="grow held-note">Alexa has it. The show leaves it alone.</span><button class="btn small" ${data({ action: "take", id })}>Take back</button></div>`;
   }
+  h += slider("Brightness", "brightness", f.brightness, 0, 100, "%", { action: "fixture", id });
+  h += slider("Kick", "kick", f.kick, 0, 150, "%", { action: "fixture", id });
+  if (strip_) h += `<h2>Movement</h2><div class="chips">${s.movements.map(m => chip(cap(m), m === l.movement, { ...base, movement: m })).join("")}</div>`;
+  h += `<h2>Colours</h2><div class="chips">${s.sources.map(m => chip(SOURCE[m], m === l.source, { ...base, source: m })).join("")}</div>`;
+  if (l.source === "own") {
+    h += `<div class="swatches">${l.colours.map((c, i) => `<div class="sw"><input type="color" value="${c}" data-colour="${i}">${l.colours.length > 1 ? `<button class="x" data-remove="${i}">×</button>` : ""}</div>`).join("")}
+      ${l.colours.length < 6 ? `<button class="add" id="addColour">+</button>` : ""}</div>`;
+  }
+  h += `<div class="chips" style="margin-top:12px">${chip("In order", !l.random, { ...base, random: false })}${chip("Random", l.random, { ...base, random: true })}</div>`;
+  if (strip_) {
+    h += slider("Spots from", "spotsLow", l.spotsLow, 1, 8, "", base) + slider("Spots to", "spotsHigh", l.spotsHigh, 1, 8, "", base);
+    h += slider("Size from", "sizeLow", l.sizeLow, 1, 10, "", base) + slider("Size to", "sizeHigh", l.sizeHigh, 1, 10, "", base);
+  }
+  h += slider(strip_ ? "Speed" : "Colour changes", "speed", l.speed, 1, 5, "", base);
+  h += slider("Rhythm quiet", "rhythmLow", l.rhythmLow, 0, 100, "%", base) + slider("Rhythm on the beat", "rhythmHigh", l.rhythmHigh, 0, 100, "%", base);
+  if (strip_) h += `<h2>Direction</h2><div class="chips">${s.directions.map(d => chip(cap(d), d === l.direction, { ...base, direction: d })).join("")}</div>`;
+  h += `<h2>Presets</h2><div class="chips">${s.presets.map(p => chip(p.name, p.id === f.preset, { action: "presetLoad", id, preset: p.id })).join("")}</div>`;
+  h += `<input type="text" id="lookName" value="${esc(l.name)}" style="margin-top:14px">`;
+  h += `<div class="chips" style="margin-top:12px">${chip("Save as a preset", false, { action: "presetSave", id })}${chip("Same on every light", false, { action: "sameOnAll", id })}`;
+  if (f.preset && s.presets.length > 1) h += chip("Delete this preset", false, { action: "presetDelete", preset: f.preset });
+  h += `</div><div class="row" style="margin-top:22px"><span class="grow"></span><button class="btn small" ${data({ action: "hold", id })}>Hand to Alexa</button></div>`;
+  return h;
+}
+
+function render(s) {
+  const np = `<p class="sub" data-np>${esc(s.title ? `${s.title} · ${s.artist}` : s.status)}</p>`;
+  let h;
+  if (tab === "lights") {
+    h = `<h1>Lights</h1>${np}<div class="row" style="margin:14px 0 18px"><span class="grow">Lights follow the music</span>${sw(s.lampsOn, { action: "lamps", on: !s.lampsOn })}</div>` + lightsTab(s);
+  } else if (tab === "scenes") {
+    h = `<h1>Scenes</h1>${np}<div class="list">`;
+    if (!s.scenes.length) h += `<p class="sub">None yet. Set the lights up, then save the room here.</p>`;
+    for (const sc of s.scenes) h += `<div class="row"><button class="grow" ${data({ action: "sceneRecall", id: sc.id })}>${esc(sc.name)}</button>
+      <button class="btn small" style="width:auto" ${data({ action: "sceneDelete", id: sc.id })}>Delete</button></div>`;
+    h += `</div><div class="row" style="margin-top:12px"><input type="text" id="sceneName" placeholder="Scene name" class="grow"><button class="btn" id="sceneSave">Save scene</button></div>`;
+  } else {
+    h = `<h1>Display</h1>${np}<h2>Visualizer</h2><div class="list">${s.styles.map(x => `<button class="${x === s.style ? "on" : ""}" ${data({ action: "display", style: x })}>${esc(x)}</button>`).join("")}</div>`;
+    h += `<h2>Colours</h2><div class="list">${s.schemes.map(x => `<button class="${x === s.scheme ? "on" : ""}" ${data({ action: "display", scheme: x })}>${esc(x)}</button>`).join("")}</div>`;
+  }
+  app.innerHTML = h;
 }
 
 app.addEventListener("click", e => {
   const b = e.target.closest("[data-act]");
   if (b) return act(JSON.parse(b.dataset.act));
-  const look = state && (state.looks.find(l => l.id === state.lookID) || state.looks[0]);
-  if (e.target.id === "addColour") return act({ action: "look", id: look.id, colours: [...look.colours, look.colours[look.colours.length - 1] || "#ffffff"] });
-  if (e.target.dataset.remove !== undefined) {
-    const cs = look.colours.filter((_, i) => i !== +e.target.dataset.remove);
-    return act({ action: "look", id: look.id, colours: cs });
-  }
+  const p = e.target.closest("[data-pick]");
+  if (p) { picked = p.dataset.pick; store.set("showLight", picked); shape = ""; return show(state); }
+  const f = state && current(state);
+  if (e.target.id === "addColour") return act({ action: "look", id: f.id, colours: [...f.look.colours, f.look.colours[f.look.colours.length - 1] || "#ffffff"] });
+  if (e.target.dataset.remove !== undefined) return act({ action: "look", id: f.id, colours: f.look.colours.filter((_, i) => i !== +e.target.dataset.remove) });
   if (e.target.id === "sceneSave") return act({ action: "sceneSave", name: document.getElementById("sceneName").value });
 });
 app.addEventListener("input", e => {
   const t = e.target;
-  if (t.dataset.key) {
-    t.previousElementSibling.querySelector("b").textContent = t.value + (t.max === "100" ? "%" : "");
-    busyUntil = Date.now() + 800;
-  }
+  if (t.dataset.key) { t.previousElementSibling.querySelector("b").textContent = t.value + t.dataset.unit; busyUntil = Date.now() + 800; }
 });
 app.addEventListener("change", e => {
-  const t = e.target, look = state && (state.looks.find(l => l.id === state.lookID) || state.looks[0]);
+  const t = e.target, f = state && current(state);
   if (t.dataset.key) return act({ ...JSON.parse(t.dataset.base), [t.dataset.key]: +t.value });
-  if (t.dataset.fixture) return act({ action: "fixture", id: t.dataset.fixture, lookID: t.value });
-  if (t.dataset.colour !== undefined) {
-    const cs = look.colours.slice(); cs[+t.dataset.colour] = t.value;
-    return act({ action: "look", id: look.id, colours: cs });
-  }
-  if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: look.id, name: t.value.trim() });
+  if (t.dataset.colour !== undefined) { const cs = f.look.colours.slice(); cs[+t.dataset.colour] = t.value; return act({ action: "look", id: f.id, colours: cs }); }
+  if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: f.id, name: t.value.trim() });
 });
 nav.addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;
   tab = b.dataset.tab;
-  try { localStorage.setItem("showTab", tab); } catch (e) {}
+  store.set("showTab", tab);
   shape = "";
   if (state) show(state);
   window.scrollTo(0, 0);
 });
-if (code) start(); else gate(false);
+if (key) start(); else gate("");
 poll();
 </script>
 </body>
