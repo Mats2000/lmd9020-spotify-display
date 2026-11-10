@@ -11,6 +11,8 @@ enum VizStyle {
     VIZ_SPECTRUM,  // a 2000s receiver's fluorescent analyzer, split by the cover, peaks that hold
     VIZ_HALO,      // a glow breathing around the cover, rippling on each beat
     VIZ_LAVA,      // slow smooth colour waves, quicker and brighter with the music
+    VIZ_RAVE,      // laser fans snapping to the beat, kick rings rushing out, strobes
+    VIZ_FRACTAL,   // a Julia set mirrored twelvefold round the cover, after Aleph
     VIZ_COUNT,
 };
 
@@ -23,6 +25,8 @@ struct VizInput {
 struct VizState {
     bool fed = false;  // the frame on screen holds this visualizer's picture, to feed back from
     float spin = 0, phase = 0;
+    float energy = 0;  // the music's loudness, smoothed (0..1)
+    float flow = 0;    // the fractal's contour lines
     uint32_t beats[6] = {};  // when recent beats landed (ms)
     int nextBeat = 0;
     bool beatHeld = false;

@@ -203,7 +203,7 @@ void netTask(void*) {
 
 #if VISUALIZER
 // Packets from tools/visualizer: "LMDV", version 1, flags (bit 0: music playing), level,
-// beat, 16 bands (low to high, each 0..255), then the visualizer style (a VizStyle). Every 2 s the display announces itself
+// beat, 16 bands (low to high, each 0..255), then the visualizer style (a VizStyle) and colour scheme (a ColourScheme). Every 2 s the display announces itself
 // ("LMD9020 1") by broadcast on the next port, so the Mac can find it.
 void vizTask(void*) {
     int s = -1;
@@ -248,6 +248,7 @@ void vizTask(void*) {
             shared.audio.beat = buf[7];
             memcpy(shared.audio.band, buf + 8, sizeof(shared.audio.band));
             shared.audio.style = len >= 25 ? buf[24] : 0;
+            shared.audio.scheme = len >= 26 ? buf[25] : 0;
             shared.audio.atMs = millis() | 1;
             xSemaphoreGive(lock);
         }

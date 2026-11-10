@@ -16,12 +16,13 @@ let displayPort: UInt16 = 4210  // the display listens here and announces itself
 let bandCount = 16
 let fftSize = 2048
 let updatesPerSecond = 60.0
-let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava"]  // VizStyle order
+let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava", "Rave", "Fractal"]  // VizStyle order
+let schemes = ["Cover Colours", "Sentia", "Ice", "Amber", "Soft Club"]  // ColourScheme order
 
 // MARK: - Network
 
 // Learns the display's address from its broadcast ("LMD9020 1" every 2 s), then sends it
-// packets: "LMDV", version 1, flags (bit 0: music playing), level, beat, 16 bands, style.
+// packets: "LMDV", version 1, flags (bit 0: music playing), level, beat, 16 bands, style, colour scheme.
 final class Link {
     private let sock: Int32
     private var target: sockaddr_in?
@@ -114,11 +115,16 @@ final class Analyzer {
     private var last = Reading()
     private let send: ([UInt8]) -> Void
     private var chosen: UInt8 = 0
+    private var colours: UInt8 = 0
     private var on = true
 
     var style: UInt8 {  // the visualizer the display should draw
         get { lock.lock(); defer { lock.unlock() }; return chosen }
         set { lock.lock(); chosen = newValue; lock.unlock() }
+    }
+    var scheme: UInt8 {  // the colours it should draw in
+        get { lock.lock(); defer { lock.unlock() }; return colours }
+        set { lock.lock(); colours = newValue; lock.unlock() }
     }
     var enabled: Bool {  // false: the display keeps its normal background
         get { lock.lock(); defer { lock.unlock() }; return on }
@@ -143,6 +149,7 @@ final class Analyzer {
         var packet: [UInt8] = Array("LMDV".utf8) + [1, 0, 0, 0]
         packet += [UInt8](repeating: 0, count: bandCount)
         packet.append(style)
+        packet.append(scheme)
         send(packet)
     }
 
@@ -220,6 +227,7 @@ final class Analyzer {
         var packet: [UInt8] = Array("LMDV".utf8) + [1, shown ? 1 : 0, UInt8(min(255, rms * 2000)), UInt8(beat * 255)]
         packet += quantised
         packet.append(style)
+        packet.append(scheme)
         send(packet)
 
         lock.lock()
@@ -392,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let allow = NSButton(title: "Allow Recording…", target: nil, action: nil)
     private let login = NSButton(checkboxWithTitle: "Open at login", target: nil, action: nil)
     private let stylePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let schemePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private var activity: NSObjectProtocol?
     private var link: Link!
     private var analyzer: Analyzer!
@@ -500,7 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ms = UInt32(truncatingIfNeeded: Int(now.timeIntervalSince(started) * 1000))
         r.bands.withUnsafeBufferPointer { b in
             frame.withUnsafeMutableBufferPointer { out in
-                lmd_demo_render(b.baseAddress, r.beat, r.playing && analyzer.enabled ? 1 : 0, Int32(analyzer.style), ms, Int32(c.hour ?? 0),
+                lmd_demo_render(b.baseAddress, r.beat, r.playing && analyzer.enabled ? 1 : 0, Int32(analyzer.style), Int32(analyzer.scheme), ms, Int32(c.hour ?? 0),
                                 Int32(c.minute ?? 0), Int32((c.weekday ?? 1) - 1), Int32((c.month ?? 1) - 1), Int32(c.day ?? 1),
                                 out.baseAddress)
             }
@@ -532,6 +541,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let title = stylePicker.titleOfSelectedItem ?? styles[0]
         analyzer.enabled = title != "Off"
         analyzer.style = UInt8(styles.firstIndex(of: title) ?? 0)
+        analyzer.scheme = UInt8(schemes.firstIndex(of: schemePicker.titleOfSelectedItem ?? schemes[0]) ?? 0)
+    }
+
+    @objc private func pickScheme() {
+        applyStyle()
+        UserDefaults.standard.set(schemePicker.titleOfSelectedItem, forKey: "schemeName")
     }
 
     @objc private func pickStyle() {
@@ -600,10 +615,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stylePicker.font = sora("Regular", 12)
         stylePicker.target = self
         stylePicker.action = #selector(pickStyle)
+        schemePicker.addItems(withTitles: schemes)
+        let savedScheme = UserDefaults.standard.string(forKey: "schemeName") ?? schemes[0]
+        schemePicker.selectItem(withTitle: schemes.contains(savedScheme) ? savedScheme : schemes[0])
+        schemePicker.font = sora("Regular", 12)
+        schemePicker.target = self
+        schemePicker.action = #selector(pickScheme)
 
         let place: [(NSView, NSRect)] = [
-            (title, NSRect(x: 20, y: 482, width: 300, height: 20)),
-            (subtitle, NSRect(x: 20, y: 464, width: 300, height: 16)),
+            (title, NSRect(x: 20, y: 482, width: 165, height: 20)),
+            (subtitle, NSRect(x: 20, y: 464, width: 165, height: 16)),
+            (schemePicker, NSRect(x: 190, y: 470, width: 168, height: 28)),
             (screen, NSRect(x: 20, y: 72, width: 512, height: 384)),
             (stylePicker, NSRect(x: 362, y: 470, width: 172, height: 28)),
             (meter, NSRect(x: 452, y: 42, width: 80, height: 18)),

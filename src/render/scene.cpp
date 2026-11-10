@@ -266,12 +266,16 @@ void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms) {
         const VizInput in{a.band, mean(0, 4), mean(5, 11), mean(11, 16), a.beat / 255.0f};
         const int x0 = ART_X + d.x, y0 = ART_Y + d.y;
         // The style stays put while fading out, though the music has stopped saying which.
-        if (heard) vizStyle_ = np.audio.style < VIZ_COUNT ? np.audio.style : 0;
+        if (heard) {
+            vizStyle_ = np.audio.style < VIZ_COUNT ? np.audio.style : 0;
+            vizScheme_ = np.audio.scheme < SCHEME_COUNT ? np.audio.scheme : 0;
+        }
         drawVisualizer(vizStyle_, c, x0, y0, x0 + ART_W, y0 + ART_H, y0 + ART_H + 4,
                        (dtMs_ > 100 ? 100 : dtMs_) * 0.001f, ms, in, viz_);
         glow_.on = true;
-        glow_.look = glowLook(pal_, glowAmount_, vizStyle_);
+        glow_.look = glowLook(pal_, glowAmount_, vizScheme_);
         glow_.style = vizStyle_;
+        glow_.scheme = vizScheme_;
         glow_.version = shownKey_;
     } else {
         c.fill(pal_.bg);

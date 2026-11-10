@@ -22,42 +22,55 @@ struct Area {
 
 int keepFor(float dt, float perSecond) { return (int)(256 * expf(-dt * perSecond)); }
 
-// The frame on screen, zoomed out from the cover's centre, turned (radians), softened (blur
-// pulls the bilinear weights toward even: 0 sharp .. 7 soft) and kept at keep / 256. With
-// nothing to feed back from, black. Every other pixel across, on every other row, is sampled
-// and the rest blended from their neighbours: a quarter of the work, and no finer than the
-// soft trails, composite's width or interlace's blending of rows would show anyway.
-void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
+// A flow field, as G-Force calls it: where each point of the next frame comes from in the one
+// on screen, given at MESH x MESH cells' corners (16.16 px) and filled in between.
+constexpr int MESH = 8;
+struct Flow {
+    int32_t x[MESH + 1][MESH + 1], y[MESH + 1][MESH + 1];
+};
+Flow flowMesh;  // static: too big for the render stack
+
+// The frame on screen warped by `f`, softened (blur pulls the bilinear weights toward even:
+// 0 sharp .. 7 soft) and kept at keep / 256; with nothing to feed back from, black. Every
+// other pixel across, on every other row, is sampled and the rest blended from their
+// neighbours: a quarter of the work, and no finer than composite or interlace would show.
+void feedback(Area& a, bool fed, const Flow& f, int keep, int blur) {
     uint8_t** in = fed ? a.c.shown : nullptr;
-    const float cs = cosf(turn) / zoom, sn = sinf(turn) / zoom;
-    const int32_t stepX = (int32_t)(cs * 65536), stepY = (int32_t)(sn * K * 65536);
     // Pulling the weights toward even also moves the sample up to half a pixel on; start that
     // much earlier so the softening is centred and nothing drifts.
     const int32_t centre = (int32_t)(32768.0f * blur / (blur + 1));
     const int soft = 65536 / (blur + 1), softAt = 128 * blur * soft;  // w -> (w + 128 blur) / (blur + 1), x65536
     const int bottom = a.bottom < Canvas::H ? a.bottom : Canvas::H;
+    constexpr int CW = Canvas::W / MESH, CH = Canvas::H / MESH;
     auto sample = [&](int32_t xs, int32_t ys) {
-            const int sx = xs >> 16, sy = ys >> 16;
-            int value = 0;
-            if ((unsigned)sx < Canvas::W - 1 && (unsigned)sy < (unsigned)(bottom - 1) &&
-                (sy + 1 < a.y0 || sy >= a.y1 || sx + 1 < a.x0 || sx >= a.x1)) {
-                const int fx = (((xs >> 8) & 255) * soft + softAt) >> 16, fy = (((ys >> 8) & 255) * soft + softAt) >> 16;
-                const uint8_t* r0 = in[sy] + sx;
-                const uint8_t* r1 = in[sy + 1] + sx;
-                const int p00 = r0[0] < GLOW_LEVELS ? r0[0] : 0, p01 = r0[1] < GLOW_LEVELS ? r0[1] : 0;
-                const int p10 = r1[0] < GLOW_LEVELS ? r1[0] : 0, p11 = r1[1] < GLOW_LEVELS ? r1[1] : 0;
-                const int top = p00 * 256 + (p01 - p00) * fx, low = p10 * 256 + (p11 - p10) * fx;
-                value = ((top * 256 + (low - top) * fy) >> 16) * keep >> 8;
-            }
-            return value;
+        xs -= centre, ys -= centre;
+        const int sx = xs >> 16, sy = ys >> 16;
+        int value = 0;
+        if ((unsigned)sx < Canvas::W - 1 && (unsigned)sy < (unsigned)(bottom - 1) &&
+            (sy + 1 < a.y0 || sy >= a.y1 || sx + 1 < a.x0 || sx >= a.x1)) {
+            const int fx = (((xs >> 8) & 255) * soft + softAt) >> 16, fy = (((ys >> 8) & 255) * soft + softAt) >> 16;
+            const uint8_t* r0 = in[sy] + sx;
+            const uint8_t* r1 = in[sy + 1] + sx;
+            const int p00 = r0[0] < GLOW_LEVELS ? r0[0] : 0, p01 = r0[1] < GLOW_LEVELS ? r0[1] : 0;
+            const int p10 = r1[0] < GLOW_LEVELS ? r1[0] : 0, p11 = r1[1] < GLOW_LEVELS ? r1[1] : 0;
+            const int top = p00 * 256 + (p01 - p00) * fx, low = p10 * 256 + (p11 - p10) * fx;
+            value = ((top * 256 + (low - top) * fy) >> 16) * keep >> 8;
+        }
+        return value;
     };
-    auto span = [&](uint8_t* out, int x0, int x1, int32_t xs, int32_t ys) {
+    int32_t rowX[MESH + 1], rowY[MESH + 1];  // this row's sources at the mesh columns
+    auto sampleSpan = [&](uint8_t* out, int x0, int x1) {
         if (x0 >= x1) return;
-        int prev = sample(xs, ys);
+        auto at = [&](int x) {
+            const int c = x / CW < MESH ? x / CW : MESH - 1, t = x - c * CW;
+            return sample(rowX[c] + (int32_t)((int64_t)(rowX[c + 1] - rowX[c]) * t / CW),
+                          rowY[c] + (int32_t)((int64_t)(rowY[c + 1] - rowY[c]) * t / CW));
+        };
+        int prev = at(x0);
         out[x0] = (uint8_t)prev;
         int x = x0 + 2;
         for (; x < x1; x += 2) {
-            const int next = sample(xs += 2 * stepX, ys += 2 * stepY);
+            const int next = at(x);
             out[x - 1] = (uint8_t)((prev + next) >> 1);
             out[x] = (uint8_t)next;
             prev = next;
@@ -76,14 +89,13 @@ void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
             for (int i = 0, n = spans(y, from, to); i < n; i++) memset(a.c.rows[y] + from[i], 0, to[i] - from[i]);
         return;
     }
-    auto sampleSpan = [&](int y, int x0, int x1) {
-        const float v = y - a.cy;
-        const int32_t xs = (int32_t)((a.cx - a.cx * cs - v * sn / K) * 65536) - centre + stepX * x0;
-        const int32_t ys = (int32_t)((a.cy - a.cx * sn * K + v * cs) * 65536) - centre + stepY * x0;
-        span(a.c.rows[y], x0, x1, xs, ys);
-    };
     auto sampleRow = [&](int y) {
-        for (int i = 0, n = spans(y, from, to); i < n; i++) sampleSpan(y, from[i], to[i]);
+        const int r = y / CH < MESH ? y / CH : MESH - 1, t = y - r * CH;
+        for (int c = 0; c <= MESH; c++) {
+            rowX[c] = f.x[r][c] + (int32_t)((int64_t)(f.x[r + 1][c] - f.x[r][c]) * t / CH);
+            rowY[c] = f.y[r][c] + (int32_t)((int64_t)(f.y[r + 1][c] - f.y[r][c]) * t / CH);
+        }
+        for (int i = 0, n = spans(y, from, to); i < n; i++) sampleSpan(a.c.rows[y], from[i], to[i]);
     };
     // Odd rows between two sampled ones: their average, unless the cover is in the way.
     auto blendRow = [&](int y) {
@@ -92,7 +104,12 @@ void feedback(Area& a, bool fed, float zoom, float turn, int keep, int blur) {
         for (int i = 0, n = spans(y, from, to); i < n; i++) {
             const int x0 = from[i], x1 = to[i];
             if (x1 > a.x0 && x0 < a.x1 && (coverRow(y - 1) || coverRow(y + 1))) {
-                sampleSpan(y, x0, x1);
+                const int r = y / CH < MESH ? y / CH : MESH - 1, t = y - r * CH;
+                for (int c = 0; c <= MESH; c++) {
+                    rowX[c] = f.x[r][c] + (int32_t)((int64_t)(f.x[r + 1][c] - f.x[r][c]) * t / CH);
+                    rowY[c] = f.y[r][c] + (int32_t)((int64_t)(f.y[r + 1][c] - f.y[r][c]) * t / CH);
+                }
+                sampleSpan(out, x0, x1);
                 continue;
             }
             for (int x = x0; x < x1; x++) out[x] = (uint8_t)((up[x] + down[x] + 1) >> 1);
@@ -160,8 +177,8 @@ void dab(Area& a, int x, int y, int s) {  // a soft 3x3 brush
     add(a, x - 1, y - 1, s / 4), add(a, x + 1, y - 1, s / 4), add(a, x - 1, y + 1, s / 4), add(a, x + 1, y + 1, s / 4);
 }
 
-void stroke(Area& a, int ax, int ay, int bx, int by, int s) {
-    const int steps = abs(bx - ax) > abs(by - ay) ? abs(bx - ax) : abs(by - ay);
+void stroke(Area& a, int ax, int ay, int bx, int by, int s) {  // a dab every 2 px: the brush is 3 wide
+    const int steps = ((abs(bx - ax) > abs(by - ay) ? abs(bx - ax) : abs(by - ay)) + 1) / 2;
     for (int i = 0; i <= steps; i++) dab(a, ax + (steps ? (bx - ax) * i / steps : 0), ay + (steps ? (by - ay) * i / steps : 0), s);
 }
 
@@ -175,19 +192,73 @@ void noteBeat(const VizInput& in, uint32_t ms, VizState& s) {
 
 // ---- The styles ----
 
+// After the classic iTunes visualizer (G-Force): each frame a fresh outline of light round the
+// edge of the screen, bent by the spectrum, and loops spinning round the cover (one when quiet,
+// up to three when loud); the whole picture flows in toward the cover, turning as it goes, so
+// past frames shrink into it as a tunnel and the loops leave spirals. Louder music pulls faster,
+// spins and twists more; beats flare the lines.
 void glow(Area& a, float dt, const VizInput& in, VizState& s) {
-    feedback(a, s.fed, expf(dt * (0.4f + 0.8f * in.bass)), dt * (0.5f + 1.0f * in.mid), keepFor(dt, 1.0f), 5);
-    s.spin += dt * (0.8f + 1.6f * in.mid);
-    const int strength = 46 + (int)(64 * in.beat) + (int)(26 * in.bass);
-    for (int curve = 0; curve < 2; curve++) {
-        const float r0 = 100 + 44 * in.bass + curve * 16, wobble = 0.22f + 0.08f * curve, wiggle = 0.16f * in.high;
+    const float loud = (in.bass + in.mid + in.high) / 3;
+    s.energy += (loud - s.energy) * (1 - expf(-dt / (loud > s.energy ? 0.4f : 1.5f)));
+    const float e = s.energy < 1 ? s.energy : 1;
+    s.phase += dt * (0.5f + 1.5f * e);
+    if (s.phase > 6283.0f) s.phase -= 6283.0f;
+    s.spin += dt * (0.25f + 0.9f * e + 0.5f * in.mid);
+
+    // The flow: in toward the middle (sources further out), turning, with a slow ripple in the
+    // pull and a swirl that is strongest near the cover and swings from one way to the other.
+    const float pull = 1 + dt * (0.45f + 1.6f * e + 1.4f * in.beat);
+    const float turn = dt * (0.12f + 0.5f * in.mid) * fastSin(s.phase * 0.21f + 1);
+    const float swirl = dt * (0.6f + 1.6f * e) * fastSin(s.phase * 0.37f);
+    for (int j = 0; j <= MESH; j++)
+        for (int i = 0; i <= MESH; i++) {
+            const float u = (i * (Canvas::W / MESH) - a.cx) * K, v = j * (Canvas::H / MESH) - a.cy;
+            const float r = sqrtf(u * u + v * v);
+            const float z = pull * (1 + 0.012f * fastSin(r * 0.07f - s.phase * 2.3f));
+            const float th = turn + swirl * 70 / (r + 70);
+            const float c = fastCos(th) * z, sn = fastSin(th) * z;
+            flowMesh.x[j][i] = (int32_t)((a.cx + (u * c - v * sn) / K) * 65536);
+            flowMesh.y[j][i] = (int32_t)((a.cy + u * sn + v * c) * 65536);
+        }
+    feedback(a, s.fed, flowMesh, keepFor(dt, 0.75f - 0.35f * e), 1);
+
+    // The outline: a rounded rectangle just inside the edges, pushed in by the spectrum (lows at
+    // the sides, highs top and bottom, mirrored), rippling with the highs.
+    const float ru = (a.cx - 4) * K, rv = (a.cy < a.bottom - a.cy ? a.cy : a.bottom - a.cy) - 6;
+    const int strength = 120 + (int)(80 * e) + (int)(110 * in.beat);
+    {
+        const float inset = 1.0f, offset = 0;
+        int px = 0, py = 0;
+        constexpr int N = 160;
+        for (int k = 0; k <= N; k++) {
+            const float t = k * (TAU / N) + offset, ct = fastCos(t), st = fastSin(t);
+            // Squarer than an ellipse: |c|^0.6 keeps the corners full.
+            const float cx = ct < 0 ? -powf(-ct, 0.6f) : powf(ct, 0.6f), cy = st < 0 ? -powf(-st, 0.6f) : powf(st, 0.6f);
+            const float around = fabsf(st);  // 0 at the sides .. 1 top and bottom
+            const float at = around * 14.99f;
+            const int b0 = (int)at;
+            const float band = (in.band[b0] + (in.band[b0 + 1] - in.band[b0]) * (at - b0)) / 255.0f;
+            const float m = inset * (1 - 0.16f * band - 0.03f * in.high * fastSin(t * 23 + s.spin * 5) -
+                                     0.025f * fastSin(t * 5 + s.spin * 2));
+            const int nx = (int)(a.cx + ru * cx * m / K), ny = (int)(a.cy + rv * cy * m);
+            if (k > 0) stroke(a, px, py, nx, ny, strength);
+            px = nx, py = ny;
+        }
+    }
+    // The loops: lobed rings spinning round the cover, each the next way round.
+    for (int curve = 0; curve < 3; curve++) {
+        const float on = curve == 0 ? 1 : (e - (curve == 1 ? 0.22f : 0.45f)) / 0.12f;  // later ones as it gets louder
+        if (on <= 0) continue;
+        const int bright = (int)((90 + 110 * e + 110 * in.beat + 40 * in.bass) * (on < 1 ? on : 1));
+        const float r0 = 98 + 40 * e + 30 * in.bass + curve * 14, wobble = 0.16f + 0.12f * e + 0.05f * curve;
+        const float wiggle = 0.18f * in.high, lobes = 3 + curve;
         int px = 0, py = 0;
         for (int k = 0; k <= 180; k++) {
             const float t = k * (TAU / 180);
-            const float r = r0 * (1 + wobble * fastSin(t * (3 + curve) + s.spin * (1 + curve)) + wiggle * fastSin(t * 9 - s.spin * 3));
-            const float angle = t + s.spin * (0.6f - curve);
+            const float r = r0 * (1 + wobble * fastSin(t * lobes + s.spin * (2 + curve)) + wiggle * fastSin(t * 9 - s.spin * 6));
+            const float angle = t + s.spin * (curve == 1 ? -1.2f : 1.4f - 0.5f * curve);
             const int nx = (int)(a.cx + r * fastCos(angle) / K), ny = (int)(a.cy + r * fastSin(angle));
-            if (k > 0) stroke(a, px, py, nx, ny, strength);
+            if (k > 0) stroke(a, px, py, nx, ny, bright);
             px = nx, py = ny;
         }
     }
@@ -344,6 +415,221 @@ void lava(Area& a, float dt, const VizInput& in, VizState& s) {
     });
 }
 
+// Every pixel off the cover, worked out every other pixel on every other row by sample(x, y)
+// and filled in between (no finer than composite or interlace would show anyway).
+template <typename F>
+void fillHalf(Area& a, F sample) {
+    const int bottom = a.bottom < Canvas::H ? a.bottom : Canvas::H;
+    auto coverRow = [&](int y) { return y >= a.y0 && y < a.y1; };
+    int from[2], to[2];
+    auto spans = [&](int y) {
+        if (!coverRow(y)) return from[0] = 0, to[0] = Canvas::W, 1;
+        return from[0] = 0, to[0] = a.x0, from[1] = a.x1, to[1] = Canvas::W, 2;
+    };
+    auto sampleSpan = [&](int y, int x0, int x1) {
+        if (x0 >= x1) return;
+        uint8_t* out = a.c.rows[y];
+        int prev = sample(x0, y);
+        out[x0] = (uint8_t)prev;
+        int x = x0 + 2;
+        for (; x < x1; x += 2) {
+            const int next = sample(x, y);
+            out[x - 1] = (uint8_t)((prev + next) >> 1);
+            out[x] = (uint8_t)next;
+            prev = next;
+        }
+        if (x == x1) out[x1 - 1] = (uint8_t)prev;
+    };
+    for (int y = 0; y < bottom; y += 2) {
+        for (int i = 0, n = spans(y); i < n; i++) sampleSpan(y, from[i], to[i]);
+        if (y < 2) continue;
+        const int b = y - 1;  // the row between: their average, unless the cover is in the way
+        const uint8_t *up = a.c.rows[b - 1], *down = a.c.rows[b + 1];
+        for (int i = 0, n = spans(b); i < n; i++) {
+            if (to[i] > a.x0 && from[i] < a.x1 && (coverRow(b - 1) || coverRow(b + 1))) {
+                sampleSpan(b, from[i], to[i]);
+                continue;
+            }
+            uint8_t* out = a.c.rows[b];
+            for (int x = from[i]; x < to[i]; x++) out[x] = (uint8_t)((up[x] + down[x] + 1) >> 1);
+        }
+    }
+    if (bottom % 2 == 0)
+        for (int i = 0, n = spans(bottom - 1); i < n; i++) sampleSpan(bottom - 1, from[i], to[i]);
+}
+
+float smoothEnergy(const VizInput& in, float dt, VizState& s) {
+    const float loud = (in.bass + in.mid + in.high) / 3;
+    s.energy += (loud - s.energy) * (1 - expf(-dt / (loud > s.energy ? 0.4f : 1.5f)));
+    return s.energy < 1 ? s.energy : 1;
+}
+
+// A thin line at `level`, with a faint pixel either side so it glows a little.
+void laser(Area& a, int ax, int ay, int bx, int by, int level) {
+    const int dx = abs(bx - ax), dy = abs(by - ay), sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
+    const bool steep = dy > dx;
+    int err = (steep ? dy : dx) / 2;
+    for (int n = steep ? dy : dx; n >= 0; n--) {
+        if (ax >= -1 && ax <= Canvas::W && ay >= -1 && ay <= a.bottom) {
+            raise(a, ax, ay, level);
+            if (steep) raise(a, ax - 1, ay, level / 3), raise(a, ax + 1, ay, level / 3);
+            else raise(a, ax, ay - 1, level / 3), raise(a, ax, ay + 1, level / 3);
+        }
+        if (steep) {
+            ay += sy;
+            if ((err -= dx) < 0) ax += sx, err += dy;
+        } else {
+            ax += sx;
+            if ((err -= dy) < 0) ay += sy, err += dx;
+        }
+    }
+}
+
+// A rave: laser fans sweeping up from the bottom corners, snapping to a new pattern on every
+// beat; on each kick a ring of light leaves the cover, and the picture streaks outward behind
+// everything; louder music means more beams and faster sweeps, and the strongest kicks flash.
+void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
+    noteBeat(in, ms, s);
+    const float e = smoothEnergy(in, dt, s);
+    s.phase += dt * (0.8f + 2.5f * e);
+    if (s.phase > 6283.0f) s.phase -= 6283.0f;
+    const float push = 1 - dt * (0.7f + 1.6f * e);  // sources nearer the middle: everything rushes out
+    for (int j = 0; j <= MESH; j++)
+        for (int i = 0; i <= MESH; i++) {
+            flowMesh.x[j][i] = (int32_t)((a.cx + (i * (Canvas::W / MESH) - a.cx) * push) * 65536);
+            flowMesh.y[j][i] = (int32_t)((a.cy + (j * (Canvas::H / MESH) - a.cy) * push) * 65536);
+        }
+    feedback(a, s.fed, flowMesh, keepFor(dt, 7.0f - 3.0f * e), 1);
+
+    const uint32_t last = s.nextBeat ? s.beats[(s.nextBeat - 1) % 6] : 0;
+    const uint32_t since = last ? ms - last : 100000;
+    if (since < 140 && e > 0.4f) {  // a flash on the kick, gone in a few frames
+        const int flash = (int)(60 * (1 - since / 140.0f) * e);
+        offCover(a, [&](int x, int, uint8_t* out) {
+            if (out[x] < flash) out[x] = (uint8_t)flash;
+        });
+    }
+    if (since < 45) {  // the kick's ring, just off the cover; the flow carries it out
+        const int d = 5, lv = 150 + (int)(80 * e);
+        for (int x = a.x0 - d; x < a.x1 + d; x++) raise(a, x, a.y0 - d, lv), raise(a, x, a.y1 + d - 1, lv);
+        for (int y = a.y0 - d; y < a.y1 + d; y++) raise(a, a.x0 - d, y, lv), raise(a, a.x1 + d - 1, y, lv);
+    }
+
+    const int beams = 3 + (int)(5 * e), pattern = s.nextBeat;
+    const float spread = 0.5f + 0.35f * fastSin(pattern * 2.3f);
+    for (int fan = 0; fan < 2; fan++) {
+        const int ox = fan ? Canvas::W - 1 : 0, oy = a.bottom - 1;
+        const float aim = fan ? -2.25f : -0.89f;  // up and in, toward the far top corner
+        const float sweep = 0.45f * fastSin(s.phase * (1.3f + 0.4f * fan) + pattern * 1.7f) * (fan ? -1 : 1);
+        for (int b = 0; b < beams; b++) {
+            const float ang = aim + sweep + (b - (beams - 1) * 0.5f) * spread / beams;
+            laser(a, ox, oy, ox + (int)(420 * fastCos(ang) / K), oy + (int)(420 * fastSin(ang)), 170 + (int)(60 * in.beat));
+        }
+    }
+}
+
+// x - floor(x) without floorf.
+inline float fract(float x) {
+    x -= (float)(int)x;
+    return x < 0 ? x + 1.0f : x;
+}
+
+// log2 to about 1%, for the fractal's smooth colouring.
+inline float fastLog2(float x) {
+    union {
+        float f;
+        uint32_t i;
+    } u = {x};
+    const float e = (float)((int)(u.i >> 23) - 127);
+    u.i = (u.i & 0x7FFFFF) | 0x3F800000;
+    return e + (-0.34484843f * u.f + 2.02466578f) * u.f - 0.67487759f;
+}
+
+// After Aleph: a Julia set worked out on a table of rings and spokes for one thirty-degree
+// wedge, mirrored twelvefold round the cover. Its constant wanders along a path of Julia sets
+// with the music, the bass pulses its zoom, the mids turn it, and thin contour lines flow out
+// through it faster as it gets louder; each beat sends a ring of light out through it.
+constexpr int FR = 48, FS = 24;               // rings, spokes
+constexpr float FR_MIN = 60, FR_MAX = 215;    // the rings' radii, px across (x K)
+uint8_t fractalTab[FR][FS];                   // static: too big for the render stack
+
+void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
+    static const float PATH[6][2] = {{-0.8f, 0.156f}, {-0.4f, 0.6f}, {-0.123f, 0.745f}, {0.285f, 0.01f}, {-0.70176f, -0.3842f}, {-0.835f, -0.2321f}};
+    noteBeat(in, ms, s);
+    const float e = smoothEnergy(in, dt, s);
+    s.phase += dt * (0.05f + 0.25f * e);  // along the path of sets
+    if (s.phase > 600.0f) s.phase -= 600.0f;
+    s.spin += dt * (0.08f + 0.5f * in.mid);
+    if (s.spin > 6283.0f) s.spin -= 6283.0f;
+    s.flow += dt * (0.4f + 2.2f * e);
+    if (s.flow > 1000.0f) s.flow -= 1000.0f;
+
+    const int at = (int)s.phase, next = (at + 1) % 6;
+    float u = s.phase - at;
+    u = u * u * (3 - 2 * u);
+    const float cr = PATH[at % 6][0] + (PATH[next][0] - PATH[at % 6][0]) * u + 0.02f * in.bass * fastSin(s.spin * 3);
+    const float ci = PATH[at % 6][1] + (PATH[next][1] - PATH[at % 6][1]) * u + 0.02f * in.mid * fastCos(s.spin * 2);
+    const float zoom = 1.2f * (1 - 0.12f * in.bass - 0.08f * in.beat);
+    constexpr int MAXN = 24;
+    // Where the last beats' rings of light are, as table rings.
+    float ringAt[6];
+    int rings = 0;
+    for (int i = 0; i < 6; i++) {
+        const uint32_t age = ms - s.beats[i];
+        if (s.beats[i] && age < 900) ringAt[rings++] = age * (FR / 900.0f);
+    }
+    for (int r = 0; r < FR; r++) {
+        const float rad = (FR_MIN + (FR_MAX - FR_MIN) * r / (FR - 1)) / FR_MAX * zoom;
+        float beatLift = 0;
+        for (int i = 0; i < rings; i++) {
+            const float d = fabsf(r - ringAt[i]);
+            if (d < 2.5f) beatLift += (1 - d / 2.5f) * 0.6f;
+        }
+        for (int k = 0; k < FS; k++) {
+            const float th = (k + 0.5f) * (0.5235988f / FS) + s.spin;
+            float zr = rad * fastCos(th), zi = rad * fastSin(th);
+            int n = 0;
+            float m2 = 0;
+            for (; n < MAXN; n++) {
+                const float zr2 = zr * zr, zi2 = zi * zi;
+                m2 = zr2 + zi2;
+                if (m2 > 256.0f) break;
+                zi = 2 * zr * zi + ci;
+                zr = zr2 - zi2 + cr;
+            }
+            float v = 0.05f;
+            if (n < MAXN) {  // smooth escape time: a body that brightens toward the set, and flowing contour lines
+                const float l = 0.5f * fastLog2(m2 > 1.0001f ? m2 : 1.0001f);
+                const float mu = n + 1 - fastLog2(l > 0.05f ? l : 0.05f);
+                float body = mu / 12;
+                body = body > 1 ? 1 : sqrtf(body);
+                const float x = fract(mu * 0.8f - s.flow);
+                const float line = x < 0.22f ? 1 - x / 0.22f : 0;
+                v = 0.08f + 0.55f * body + line * (0.3f + 0.3f * e) * (0.4f + 0.6f * body);
+            }
+            v += beatLift * (0.4f + 0.6f * e);
+            fractalTab[r][k] = (uint8_t)(v >= 1 ? TOP : v * TOP);
+        }
+    }
+    // Each pixel: its ring by distance, its spoke by the angle folded into one thirty-degree wedge.
+    fillHalf(a, [&](int x, int y) {
+        const float px = fabsf((x - a.cx) * K), py = fabsf(y - a.cy);
+        const float rr = sqrtf(px * px + py * py);
+        int r = (int)((rr - FR_MIN) * ((FR - 1) / (FR_MAX - FR_MIN)));
+        if (r < 0) r = 0;
+        if (r >= FR) return 0;
+        // The angle in 0..90 degrees, then folded into 0..30 (mirrored every thirty).
+        const float lo = px < py ? px : py, hi = px < py ? py : px;
+        const float t = hi > 0 ? lo / hi : 0;
+        float ang = t * (0.9724f - 0.1919f * t * t);  // atan, 0..pi/4
+        if (py > px) ang = 1.5707963f - ang;
+        ang = fract(ang * (1 / 1.0471976f)) * 2;  // in sixty-degree pieces, 0..2
+        if (ang > 1) ang = 2 - ang;
+        const int k = (int)(ang * FS);
+        return (int)fractalTab[r][k < FS ? k : FS - 1];
+    });
+}
+
 }  // namespace
 
 void drawVisualizer(int style, Canvas& c, int x0, int y0, int x1, int y1, int bottom, float dt, uint32_t ms,
@@ -354,6 +640,8 @@ void drawVisualizer(int style, Canvas& c, int x0, int y0, int x1, int y1, int bo
         case VIZ_SPECTRUM: spectrum(a, dt, in, s); break;
         case VIZ_HALO: halo(a, ms, in, s); break;
         case VIZ_LAVA: lava(a, dt, in, s); break;
+        case VIZ_RAVE: rave(a, dt, ms, in, s); break;
+        case VIZ_FRACTAL: fractal(a, dt, ms, in, s); break;
         default: glow(a, dt, in, s); break;
     }
     if (s.spin > 6283.0f) s.spin -= 6283.0f;

@@ -24,6 +24,7 @@ struct NowPlaying {
         uint8_t band[16] = {};     // 0..255, low to high
         uint8_t level = 0, beat = 0;
         uint8_t style = 0;         // a VizStyle, chosen in the app
+        uint8_t scheme = 0;        // a ColourScheme, chosen in the app
         bool active = false;       // music is playing there
         uint32_t atMs = 0;         // millis() when the last update arrived; 0 = never
     } audio;
@@ -53,7 +54,7 @@ struct GlowRegion {
     bool on = false;
     GlowLook look;
     int level = 256;
-    int style = 0;
+    int style = 0, scheme = 0;
     uint32_t version = 0;  // changes with the cover
 };
 
@@ -105,7 +106,7 @@ private:
     GlowRegion glow_;
     int glowAmount_ = 0;     // 0..256: how far the card has blended into the visualizer
     VizState viz_;
-    int vizStyle_ = 0;
+    int vizStyle_ = 0, vizScheme_ = 0;
     int dtMs_ = 0;
     ScenePalette pal_ = defaultPalette();  // kept after a track ends to tint the waves
     Marquee lineMarquee_{};

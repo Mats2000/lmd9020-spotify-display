@@ -97,6 +97,9 @@ int main(int argc, char** argv) {
         float hat = expf(-(beat * 2 - floorf(beat * 2)) * 14), pad = 0.5f + 0.4f * sinf(t * 0.0009f);
         static const float BASS[4] = {0.8f, 0.6f, 0.9f, 0.7f};
         float bass = BASS[(int)beat % 4];
+        // PREVIEW_DYNAMICS: swell from quiet to loud and back every 16 s.
+        const float swell = getenv("PREVIEW_DYNAMICS") ? 0.2f + 0.8f * (0.5f - 0.5f * cosf(t * (6.2831853f / 16000))) : 1;
+        kick *= swell, snare *= swell, hat *= swell, bass *= swell, pad *= swell;
         for (int i = 0; i < 16; i++) {
             float x = i / 15.0f;
             float v = kick * fmaxf(0, 1 - x * 4) + bass * expf(-powf((x - 0.15f) / 0.08f, 2)) * 0.7f +
@@ -108,6 +111,7 @@ int main(int argc, char** argv) {
         np.audio.active = true;
         np.audio.atMs = t | 1;
         if (const char* style = getenv("PREVIEW_STYLE")) np.audio.style = (uint8_t)atoi(style);
+        if (const char* scheme = getenv("PREVIEW_SCHEME")) np.audio.scheme = (uint8_t)atoi(scheme);
     };
     int frame = 0;
     auto renderAt = [&](uint32_t t) {

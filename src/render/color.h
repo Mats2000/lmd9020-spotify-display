@@ -63,6 +63,9 @@ struct ScenePalette {
     RGB accent;      // tints the idle wave field after this track
     float hue = 220;        // the background's hue; the cover's own is opposite
     float colourful = 1;    // 0 for a greyscale cover
+    // The cover's own strongest hues (up to 3, at least 40 degrees apart), strongest first.
+    float coverHue[3] = {}, coverSat[3] = {};
+    int coverHues = 0;
 };
 
 ScenePalette defaultPalette();
@@ -79,5 +82,7 @@ struct GlowLook {
     RGB bg, title, artist;
     int amount;
 };
-GlowLook glowLook(const ScenePalette& p, int amount, int style = 0);
+// The visualizers' colours, chosen in the app: the cover's own, or a fixed scheme.
+enum ColourScheme { SCHEME_COVER, SCHEME_SENTIA, SCHEME_ICE, SCHEME_AMBER, SCHEME_SOFT_CLUB, SCHEME_COUNT };
+GlowLook glowLook(const ScenePalette& p, int amount, int scheme = SCHEME_COVER);
 RGB glowColour(const GlowLook& g, int index);

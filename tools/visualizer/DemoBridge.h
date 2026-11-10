@@ -14,7 +14,7 @@ void lmd_demo_set_playing(int playing, int paused);
 
 // One frame (call about 30 times a second): the same bands and style the display is sent, the
 // local time, and out = 256x240 RGB as the monitor would show it.
-void lmd_demo_render(const uint8_t* bands16, uint8_t beat, int active, int style, uint32_t ms, int hour, int minute,
+void lmd_demo_render(const uint8_t* bands16, uint8_t beat, int active, int style, int scheme, uint32_t ms, int hour, int minute,
                      int wday, int mon, int mday, uint8_t* out);
 
 #ifdef __cplusplus
