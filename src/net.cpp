@@ -1,3 +1,4 @@
+#include "log.h"
 #include "net.h"
 
 #include <MD5Builder.h>
@@ -41,7 +42,7 @@ void setStatus(const char* fmt, ...) {
     bool changed = strcmp(buf, shared.status) != 0;
     if (changed) copyUtf8(shared.status, buf, sizeof(shared.status));
     xSemaphoreGive(lock);
-    if (changed && buf[0]) Serial.printf("Status: %s\n", buf);
+    if (changed && buf[0]) say("Status: %s\n", buf);
 }
 
 void setPlaying(bool playing, bool paused) {
@@ -68,17 +69,21 @@ bool loadTrack(const Track& t) {
     }
     vTaskDelay(pdMS_TO_TICKS(100));  // the video output lets go of the cover's palette at the next frame
 
-    Serial.printf("Now: %s / %s (heap %u, largest %u, net stack left %u)\n", t.title.c_str(),
+    say("Now: %s / %s (heap %u, largest %u, net stack left %u)\n", t.title.c_str(),
                   t.artist.c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                   uxTaskGetStackHighWaterMark(nullptr));
     ScenePalette pal;
     int colours = 0;
-    bool ok = prefetch::load(t, art, pal, colours);
-    prefetch::forget();  // the slot is for the song after this one
+    bool mine = prefetch::heldFor(t);
+    bool ok = mine && prefetch::load(t, art, pal, colours);
+    // Used: the slot is for the song after this one now. Someone else's (after a restart, say) stays
+    // until the queue says otherwise.
+    if (mine) prefetch::forget("this song began");
     if (!ok) ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
-    if (!ok) {  // one more try: a dropped download is usually a one-off
+    if (!ok) {  // one more try, the next size down if there is one: some sizes won't decode (progressive)
         vTaskDelay(pdMS_TO_TICKS(500));
-        ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
+        bool small = t.smallUrl.length() > 0;
+        ok = fetchCover(small ? t.smallUrl : t.imageUrl, small ? t.smallWidth : t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
     }
     if (!ok) {
         pal = defaultPalette();
@@ -86,7 +91,7 @@ bool loadTrack(const Track& t) {
         colours = 0;
     }
 
-    Serial.printf("  net stack left after the cover: %u\n", uxTaskGetStackHighWaterMark(nullptr));
+    say("  net stack left after the cover: %u\n", uxTaskGetStackHighWaterMark(nullptr));
     xSemaphoreTake(lock, portMAX_DELAY);
     shared.art = art;
     shared.artColours = colours;
@@ -124,20 +129,20 @@ void runUpdate() {
     char hex[65];
     for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", sum[i]);
     if (strcmp(hex, r.token) != 0) {
-        Serial.println("Update over Wi-Fi refused: wrong password");
+        say("%s\n", "Update over Wi-Fi refused: wrong password");
         return;
     }
     const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
     if (!part || r.size == 0 || r.size > part->size) {
-        Serial.println("Update over Wi-Fi refused: no room for it");
+        say("%s\n", "Update over Wi-Fi refused: no room for it");
         return;
     }
-    Serial.printf("Update over Wi-Fi: %u bytes\n", (unsigned)r.size);
+    say("Update over Wi-Fi: %u bytes\n", (unsigned)r.size);
     https.close();
     WiFiClient c;
     esp_ota_handle_t h;
     if (!c.connect(IPAddress(r.ip), r.port, 5000) || esp_ota_begin(part, r.size, &h) != ESP_OK) {
-        Serial.println("Update over Wi-Fi failed to start");
+        say("%s\n", "Update over Wi-Fi failed to start");
         return;
     }
     MD5Builder md5;
@@ -159,16 +164,16 @@ void runUpdate() {
     md5.calculate();
     if (got != r.size || md5.toString() != r.md5) {
         esp_ota_abort(h);
-        Serial.printf("Update over Wi-Fi failed (%u of %u bytes)\n", (unsigned)got, (unsigned)r.size);
+        say("Update over Wi-Fi failed (%u of %u bytes)\n", (unsigned)got, (unsigned)r.size);
         c.print("FAIL\n");
         return;
     }
     if (esp_ota_end(h) != ESP_OK || esp_ota_set_boot_partition(part) != ESP_OK) {
-        Serial.println("Update over Wi-Fi failed to finish");
+        say("%s\n", "Update over Wi-Fi failed to finish");
         c.print("FAIL\n");
         return;
     }
-    Serial.println("Update over Wi-Fi: done, restarting");
+    say("%s\n", "Update over Wi-Fi: done, restarting");
     c.print("OK\n");
     c.flush();
     delay(300);
@@ -199,7 +204,7 @@ void netTask(void*) {
         }
     }
     spotify.begin();
-    if (!prefetch::begin()) Serial.println("No flash partition for the next cover");
+    if (!prefetch::begin()) say("%s\n", "No flash partition for the next cover");
 
     String currentKey;
     int coverRetries = 0;  // left for the current track's cover, if it didn't come
@@ -224,7 +229,7 @@ void netTask(void*) {
         }
         if (!reported) {
             reported = true;
-            Serial.printf("Wi-Fi up, %s. Heap %u, largest %u\n", WiFi.localIP().toString().c_str(),
+            say("Wi-Fi up, %s. Heap %u, largest %u\n", WiFi.localIP().toString().c_str(),
                           heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
         }
         // The clock is needed before HTTPS anyway (certificate dates).
@@ -249,7 +254,7 @@ void netTask(void*) {
                     currentKey = track.key;
                 } else if (coverRetries > 0 && (int32_t)(millis() - coverRetryAt) >= 0) {
                     // The cover didn't come: try again a little later, rather than for good.
-                    Serial.println("Trying the cover again");
+                    say("%s\n", "Trying the cover again");
                     coverRetries = loadTrack(track) ? 0 : coverRetries - 1;
                     coverRetryAt = millis() + 30000;
                 }
@@ -268,8 +273,10 @@ void netTask(void*) {
                         askedFor = currentKey;
                         askedLate = askedLate || late;
                         Track n;
-                        if (spotify.next(n) == SpotifyResult::Item && n.key != currentKey && !prefetch::holds(n.key)) {
-                            prefetch::forget();
+                        SpotifyResult q = spotify.next(n);
+                        say("Queue: %s next %s\n", q == SpotifyResult::Item ? "ok" : "nothing", q == SpotifyResult::Item ? n.key.c_str() : "");
+                        if (q == SpotifyResult::Item && n.key != currentKey && !prefetch::heldFor(n)) {
+                            prefetch::forget("the queue changed");
                             wanted = n;
                             haveWanted = true;
                         }
@@ -298,7 +305,7 @@ void netTask(void*) {
                 if (++failures >= 4) setStatus("Can’t reach Spotify…");
                 wait = 2000u << (failures < 5 ? failures - 1 : 5);
                 if (wait > 60000) wait = 60000;
-                Serial.printf("  heap %u, largest %u, lowest ever %u\n", heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                say("  heap %u, largest %u, lowest ever %u\n", heap_caps_get_free_size(MALLOC_CAP_8BIT),
                               heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                               heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
                 break;
@@ -369,6 +376,7 @@ void vizTask(void*) {
             continue;
         }
         if (len >= 24 && memcmp(buf, "LMDV", 4) == 0 && buf[4] == 1) {
+            logTo(from.sin_addr.s_addr);
             xSemaphoreTake(lock, portMAX_DELAY);
             shared.audio.active = buf[5] & 1;
             shared.audio.level = buf[6];
@@ -388,16 +396,17 @@ void vizTask(void*) {
 void netStart(const Scene* s) {
     scene = s;
     lock = xSemaphoreCreateMutex();
+    logStart();
     art = (uint32_t*)heap_caps_malloc(ART_ALLOC_WORDS * 4, MALLOC_CAP_EXEC);  // IRAM, see art.h
     if (!art) {
-        Serial.println("Cover buffer didn't fit in IRAM; using ordinary RAM");
+        say("%s\n", "Cover buffer didn't fit in IRAM; using ordinary RAM");
         art = (uint32_t*)malloc(ART_ALLOC_WORDS * 4);
     }
     if (!art) {
-        Serial.println("Out of memory for the cover art buffer");
+        say("%s\n", "Out of memory for the cover art buffer");
         abort();
     }
-    xTaskCreatePinnedToCore(netTask, "net", 9728, nullptr, 1, nullptr, 0);  // peaks near 7 KB
+    xTaskCreatePinnedToCore(netTask, "net", 10240, nullptr, 1, nullptr, 0);  // peaks near 8.7 KB
 #if VISUALIZER
     xTaskCreatePinnedToCore(vizTask, "viz", 2304, nullptr, 1, nullptr, 0);
 #endif

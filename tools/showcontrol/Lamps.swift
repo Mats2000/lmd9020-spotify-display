@@ -54,6 +54,9 @@ struct LampLook: Codable, Equatable, Identifiable {
     var speed = 2                        // 1...5
     var rhythmLow = 18, rhythmHigh = 100 // % brightness, quiet to on the beat
     var direction: Direction = .up
+    var followsSong: Bool? = nil         // colours change with the song's character, not the beat
+
+    var bySong: Bool { followsSong ?? false }
 
     static let builtIn: [LampLook] = [
         LampLook(name: "Your Govee Twinkle"),
@@ -105,7 +108,17 @@ final class LampEngine {
         self.look = look
     }
 
-    private var colours: [RGB] { palette.isEmpty ? [RGB(255, 236, 210)] : palette }
+    private var palette_: [RGB] { palette.isEmpty ? [RGB(255, 236, 210)] : palette }
+    // Following the song: one colour at a time, the next each time the song's character changes,
+    // faded across over 1.5 s.
+    var songStep = 0
+    private var shownStep = 0, fromColour: RGB?, fade = 1.0
+    private var songColour: RGB {
+        let c = palette_, to = c[songStep % c.count]
+        guard let from = fromColour, fade < 1 else { return to }
+        return RGB.mix(from, to, fade)
+    }
+    private var colours: [RGB] { look.bySong ? [songColour] : palette_ }
 
     private func takeColour() -> RGB {
         let c = colours
@@ -159,6 +172,13 @@ final class LampEngine {
     // One frame: dt seconds since the last, energy 0...1 (the music's loudness).
     func frame(dt: Double, energy: Double) -> [RGB] {
         flash *= exp(-dt * 11)  // a sharp fall: the kick reads as a hit, not a swell
+        if songStep != shownStep {
+            let c = palette_
+            fromColour = c[shownStep % c.count]
+            shownStep = songStep
+            fade = 0
+        }
+        fade = min(1, fade + dt / 1.5)
         phase += dt * speed
         let n = span
         var line = [RGB](repeating: .black, count: n)
@@ -426,6 +446,7 @@ final class MatterLights {
     private(set) var names: [String] = []
     private(set) var running = false
     var onReleased: ((String) -> Void)?  // someone else (Alexa) took this light
+    var onStarted: (() -> Void)?         // the helper is listening: it drives nothing until told to
     private let lock = NSLock()
     private var trips: [String: Double] = [:]
 
@@ -476,13 +497,26 @@ final class MatterLights {
                         self?.trips[String(parts[1])] = ms / 1000
                         self?.lock.unlock()
                     }
+                } else if line.hasPrefix("Listening on ") {
+                    // Commands sent before this were lost: the show hands it its lights again now.
+                    DispatchQueue.main.async { self?.onStarted?() }
+                } else if line.contains("connection error (retry in") {
+                    // matter.js would wait minutes to try a light again; a fresh helper connects at once.
+                    DispatchQueue.main.async { self?.restartSoon() }
                 } else if line.hasPrefix("Released: ") {
                     let name = String(line.dropFirst(10).split(separator: " ").first ?? "")
                     DispatchQueue.main.async { self?.onReleased?(name) }
                 }
             }
         }
-        p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.running = false } }
+        // Only this helper's own exit counts: one stopped for a restart exits after the new one started.
+        p.terminationHandler = { [weak self] ended in
+            DispatchQueue.main.async {
+                guard let self, self.process === ended else { return }
+                self.process = nil
+                self.running = false
+            }
+        }
         do {
             try p.run()
             process = p
@@ -494,6 +528,17 @@ final class MatterLights {
         process?.terminate()
         process = nil
         running = false
+    }
+
+    private var restarts = 0
+    private func restartSoon() {
+        guard restarts < 3 else { return }
+        restarts += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            self.stop()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.start() }
+        }
     }
 
     func send(_ command: [String: Any]) {

@@ -210,7 +210,7 @@ extension Show {
             ["name": l.name, "movement": l.movement.rawValue, "source": l.source.rawValue,
              "colours": l.colours.map(\.hex), "random": l.random, "spotsLow": l.spotsLow, "spotsHigh": l.spotsHigh,
              "sizeLow": l.sizeLow, "sizeHigh": l.sizeHigh, "speed": l.speed, "rhythmLow": l.rhythmLow,
-             "rhythmHigh": l.rhythmHigh, "direction": l.direction.rawValue]
+             "rhythmHigh": l.rhythmHigh, "direction": l.direction.rawValue, "bySong": l.bySong]
         }
         return [
             "title": title, "artist": artist, "status": status,
@@ -259,6 +259,7 @@ extension Show {
                     if !cs.isEmpty { l.colours = cs }
                 }
                 if let v = a["random"] as? Bool { l.random = v }
+                if let v = a["bySong"] as? Bool { l.followsSong = v }
                 if let v = int("spotsLow", 1...8) { l.spotsLow = v; l.spotsHigh = max(l.spotsHigh, v) }
                 if let v = int("spotsHigh", 1...8) { l.spotsHigh = v; l.spotsLow = min(l.spotsLow, v) }
                 if let v = int("sizeLow", 1...10) { l.sizeLow = v; l.sizeHigh = max(l.sizeHigh, v) }

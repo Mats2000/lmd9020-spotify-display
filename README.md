@@ -238,7 +238,10 @@ Lights come along from the same analysis as the display, not a microphone. The *
 shows every light found; pick one and set it on its own: on or off, brightness, **kick** (how much
 each kick flashes it, 0-150%) and its own **look**: a movement (Flow, Twinkle, Flexing, Stacking,
 Strike, Gradient, Chase, Pulse), colours (its own, chosen and removed one by one, the cover's or
-the display's scheme, in order or at random), spots and size (ranges, wider with louder music),
+the display's scheme, in order or at random, changing with the beat or **with the song**: one
+colour at a time, the next when the song's character changes, as its energy across the bands and
+its loudness over ~1.5 s part from the last ~10 s much more than they usually do in that song),
+spots and size (ranges, wider with louder music),
 speed, rhythm (brightness from quiet to the beat) and direction. A bulb has no segments, so it
 keeps colours, how often they change, and rhythm. **Presets** are looks saved to reuse: one click
 copies one into the open light, "Save as a preset" keeps the light's look, "Same on every light"
@@ -265,6 +268,10 @@ taken when its colour mode changes: the show only ever sends hue and saturation,
 colours and whites another way (the hue a bulb reports back drifts, so it isn't compared). Ten
 seconds after the music stops, or when a light or all lights are switched off or the app quits,
 every light the show still has goes back to its own colour and brightness.
+
+**The display's log** comes over Wi-Fi to the Mac running the visualizer (UDP, port 4212) and is
+kept in `~/Library/Logs/Show Control/display.log`: each song, each cover (downloaded or from the
+prefetch, how long it took, the memory and stack left), every 30 s the render timing.
 
 **On a phone:** the app serves the same controls (Lights, Scenes, Display) on port 8770. Set a
 password on the Scenes page (10 characters or more); a phone signs in once and keeps a long random
@@ -299,7 +306,8 @@ capture's own timestamps), so a light flashes when the kick is *heard*: after th
 Govee lamp, half the measured round trip for a Matter light). A light too slow for that (a Matter
 bulb takes 100-160 ms a command) gets kicks ahead: a beat grid is fitted through the last 8 s of
 kicks, each sixteenth that had a kick in both of the last two bars is guessed to have one again,
-and the guesses are sent its own delay early once 70% of them come true. A bulb kick goes straight
+and the guesses are sent its own delay early (and 10 ms more) once 70% of them come true; every
+light gets them, since the lamp's Wi-Fi is often late too (it dozes between messages, 4-190 ms). A bulb kick goes straight
 up and falls back as soon as the bulb has it, and between kicks the bulb sits under half way up
 its rhythm (darker still with the kick over 100%), so the flash shows. The Lights page shows the
 measured delays. `defaults write com.sentiainstruments.lmd-visualizer logKicks -bool true` logs
@@ -409,7 +417,8 @@ playback starts it powers the signal back up and fades in, usually within
   of the reply is never read) and its thumbnail and cover JPEGs are saved to
   the spare 128 KB flash partition (`spiffs` in `min_spiffs.csv`, used raw;
   the 300 px cover when the 640 px one won't fit). When that song comes, the
-  cover is decoded from flash, with no download. Erasing flash pauses the
+  cover is decoded from flash, with no download, read straight from the chip a piece at a time
+  (through the cache it could come back as the previous cover). Erasing flash pauses the
   render core, so the slot is erased one 4 KB sector at a time between polls
   (`src/prefetch.cpp`).
 - **Pixel aspect:** each of the 256 pixels per line is ~1.27× wider than

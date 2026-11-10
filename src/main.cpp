@@ -9,6 +9,7 @@
 #include <sys/time.h>
 #include <time.h>
 
+#include "log.h"
 #include "config.h"
 #include "net.h"
 #include "render/scene.h"
@@ -64,21 +65,21 @@ static bool reportLastReset() {
     const bool ours = why == ESP_RST_SW && stallMagic == STALL_MAGIC;
     stallMagic = 0;
     if (ours && stallStage < STAGE_COUNT)
-        Serial.printf("Restarted: the main loop stalled while %s\n", STAGE_NAMES[stallStage]);
+        say("Restarted: the main loop stalled while %s\n", STAGE_NAMES[stallStage]);
     else if (ours && stallStage == NET_STUCK)
-        Serial.println("Restarted: the network task stalled");
+        say("%s\n", "Restarted: the network task stalled");
     else if (ours && stallStage == NET_SILENT)
-        Serial.println("Restarted: Spotify hadn't answered for 10 minutes");
+        say("%s\n", "Restarted: Spotify hadn't answered for 10 minutes");
     else if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT)
-        Serial.printf("Restarted after a crash or watchdog (reason %d)\n", (int)why);
+        say("Restarted after a crash or watchdog (reason %d)\n", (int)why);
     else if (why == ESP_RST_BROWNOUT)
-        Serial.println("Restarted after a brownout: check the power supply");
+        say("%s\n", "Restarted after a brownout: check the power supply");
     return ours && stallAsleep;
 }
 
 void setup() {
     Serial.begin(115200);
-    Serial.printf("\nLMD-9020 Spotify display (%s). Free heap %u\n", VIDEO_NTSC ? "NTSC" : "PAL",
+    say("\nLMD-9020 Spotify display (%s). Free heap %u\n", VIDEO_NTSC ? "NTSC" : "PAL",
                   ESP.getFreeHeap());
     const bool stayAsleep = reportLastReset();
 
@@ -92,7 +93,7 @@ void setup() {
     dac_output_enable(DAC_CHANNEL_2);
     dac_output_disable(DAC_CHANNEL_1);
 #endif
-    Serial.printf("Video running. Free heap %u, largest block %u\n", ESP.getFreeHeap(),
+    say("Video running. Free heap %u, largest block %u\n", ESP.getFreeHeap(),
                   ESP.getMaxAllocHeap());
 
     pinMode(BOOT_BUTTON, INPUT_PULLUP);
@@ -123,7 +124,7 @@ static void pollButton() {
             buttonSnow = !buttonSnow;
             buttonSnowUntil = millis() + REFRESH_BUTTON_MINUTES * 60000UL;
             lastActiveMs = millis();
-            Serial.println(buttonSnow ? "Button: panel refresh on" : "Button: panel refresh off");
+            say("%s\n", buttonSnow ? "Button: panel refresh on" : "Button: panel refresh off");
         }
     }
     if (buttonSnow && (int32_t)(millis() - buttonSnowUntil) >= 0) buttonSnow = false;
@@ -159,7 +160,7 @@ static void showGlowPalette(const GlowRegion& g) {
     static uint32_t version = 0;
     static bool wasOn = false;
     if (g.on != wasOn) {
-        Serial.println(g.on ? "Visualizer: on" : "Visualizer: off");
+        say("%s\n", g.on ? "Visualizer: on" : "Visualizer: off");
         wasOn = g.on;
     }
     if (!g.on) {
@@ -195,13 +196,13 @@ static bool handleSleep() {
         dac_output_disable(VIDEO_DAC);
         ESP_8_BIT_composite::pause();
         signalOff = true;
-        Serial.println("Nothing played for a while: video signal off");
+        say("%s\n", "Nothing played for a while: video signal off");
     } else if (!sleepy && signalOff) {
         stage = STAGE_WAKING;
         ESP_8_BIT_composite::resume();
         dac_output_enable(VIDEO_DAC);
         signalOff = false;
-        Serial.println("Playing again: video signal on");
+        say("%s\n", "Playing again: video signal on");
     }
     return signalOff;
 }
@@ -245,7 +246,7 @@ void loop() {
     frames++;
     if (took > (VIDEO_NTSC ? 33366u : 40000u)) overBudget++;  // two fields
     if (millis() - lastReport > 30000) {
-        Serial.printf("Last 30 s: %u frames, avg %u us, slowest %u us, %u over budget. "
+        say("Last 30 s: %u frames, avg %u us, slowest %u us, %u over budget. "
                       "Heap %u, largest %u, render stack left %u\n",
                       frames, frames ? total / frames : 0, slowest, overBudget,
                       heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),

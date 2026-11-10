@@ -11,10 +11,12 @@ namespace prefetch {
 bool begin();
 // Is the stored cover this track's?
 bool holds(const String& key);
+// Is the stored cover this track's, by id or by title and artist?
+bool heldFor(const Track& t);
 // Decodes the stored cover into art; false if it isn't this track's or doesn't decode.
 bool load(const Track& t, uint32_t* art, ScenePalette& pal, int& colours);
-// Drops the stored cover; the slot is erased bit by bit with eraseStep().
-void forget();
+// Drops the stored cover (why: for the log); the slot is erased bit by bit with eraseStep().
+void forget(const char* why);
 // Erases one sector if any is left; false when there's nothing to do.
 bool eraseStep();
 bool clean();

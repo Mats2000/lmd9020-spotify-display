@@ -1,5 +1,7 @@
+#include "log.h"
 #include "cover.h"
 
+#include <esp_partition.h>
 #include <new>
 
 // TJpgDec (via esp32-camera in the Arduino core): reads the HTTPS stream directly.
@@ -18,16 +20,18 @@ struct Source {
 
 uint32_t lowestHeap;  // during the decode, for the log
 
-// A JPEG already in memory (a prefetched cover); null: the HTTPS body.
-const uint8_t* memAt;
-size_t memLeft;
+// A JPEG in flash (a prefetched cover), read straight from the chip rather than through the
+// cache, which can still hold the cover that was in its place before; null: the HTTPS body.
+const esp_partition_t* flashPart;
+uint32_t flashAt;
+size_t flashLeft;
 
 // Returns `len` bytes unless the body ends; buf == nullptr means skip them.
 size_t jpegRead(void*, size_t, uint8_t* buf, size_t len) {
-    if (memAt) {
-        size_t n = len < memLeft ? len : memLeft;
-        if (buf) memcpy(buf, memAt, n);
-        memAt += n, memLeft -= n;
+    if (flashPart) {
+        size_t n = len < flashLeft ? len : flashLeft;
+        if (buf && n && esp_partition_read(flashPart, flashAt, buf, n) != ESP_OK) return 0;
+        flashAt += n, flashLeft -= n;
         return n;
     }
     uint32_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -104,29 +108,29 @@ int coverScale(int& imageWidth) {
 
 }  // namespace
 
-bool decodeCover(const uint8_t* thumb, size_t thumbLen, int thumbWidth, const uint8_t* image, size_t imageLen,
-                 int imageWidth, uint32_t* dst, ScenePalette& pal, int& colours) {
+bool decodeCover(const esp_partition_t* part, uint32_t thumbAt, size_t thumbLen, int thumbWidth, uint32_t imageAt,
+                 size_t imageLen, int imageWidth, uint32_t* dst, ScenePalette& pal, int& colours) {
     uint32_t started = millis();
     int scale = coverScale(imageWidth);
     colours = 0;
     if (thumbLen) {
-        memAt = thumb, memLeft = thumbLen;
+        flashPart = part, flashAt = thumbAt, flashLeft = thumbLen;
         colours = decodePalette(thumbWidth, thumbLen, dst);
     }
     ArtBuilder* builder = new (std::nothrow) ArtBuilder;
     if (!builder) {
-        memAt = nullptr;
+        flashPart = nullptr;
         return false;
     }
     builder->reserve(imageWidth >> scale, 8);
-    memAt = image, memLeft = imageLen;
+    flashPart = part, flashAt = imageAt, flashLeft = imageLen;
     Source src{builder, dst, colours};
     esp_err_t err = esp_jpg_decode(imageLen, (jpg_scale_t)scale, jpegRead, jpegWrite, &src);
-    memAt = nullptr;
+    flashPart = nullptr;
     builder->finish();
     if (err == ESP_OK) pal = pickPalette(builder->stats());
     delete builder;
-    Serial.printf("Cover from flash %d px (%u KB): %s, %d colours, %u ms\n", imageWidth, (unsigned)(imageLen / 1024),
+    say("Cover from flash %d px (%u KB): %s, %d colours, %u ms\n", imageWidth, (unsigned)(imageLen / 1024),
                   esp_err_to_name(err), colours, (unsigned)(millis() - started));
     return err == ESP_OK;
 }
@@ -151,7 +155,7 @@ bool fetchCover(const String& url, int imageWidth, const String& thumbUrl, int t
     int code = https.request("GET", host.c_str(), path.c_str());
     uint32_t connected = millis();
     if (code != 200) {
-        Serial.printf("Cover download: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
+        say("Cover download: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
         delete builder;
         return false;
     }
@@ -163,9 +167,10 @@ bool fetchCover(const String& url, int imageWidth, const String& thumbUrl, int t
     delete builder;
     https.close();  // the next request goes to Spotify's API host anyway
 
-    Serial.printf("Cover %d px (%d KB) decoded at 1/%d: %s. %d colours (%u ms), connect %u ms, "
+    say("Cover %d px (%d KB) decoded at 1/%d: %s. %d colours (%u ms), connect %u ms, "
                   "download+decode %u ms, lowest heap %u\n",
                   imageWidth, len / 1024, 1 << scale, esp_err_to_name(err), colours, (unsigned)paletteMs,
                   (unsigned)(connected - started), (unsigned)(millis() - connected), (unsigned)lowestHeap);
+    if (err != ESP_OK) say("  that was %s\n", path.c_str());
     return err == ESP_OK;
 }

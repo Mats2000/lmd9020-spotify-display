@@ -243,3 +243,38 @@ func coverColours(_ image: CGImage) -> [RGB] {
         RGB(hue: Double(bin) * 10 + 5, saturation: max(0.6, min(1, sat[bin] / max(weight[bin], 1e-6))))
     }
 }
+
+// The display's log lines, sent over Wi-Fi to whichever Mac drives its visualizer (on port 4212),
+// kept in ~/Library/Logs/Show Control/display.log (last 2 MB) for when a cover won't come.
+final class DisplayLog {
+    init() { Thread { self.listen() }.start() }
+
+    private func listen() {
+        let sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        var local = sockaddr_in()
+        local.sin_family = sa_family_t(AF_INET)
+        local.sin_port = (displayPort + 2).bigEndian
+        local.sin_addr.s_addr = INADDR_ANY
+        _ = withUnsafePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Show Control")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("display.log")
+        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
+        guard let file = try? FileHandle(forWritingTo: url) else { return }
+        file.seekToEndOfFile()
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        var buf = [UInt8](repeating: 0, count: 512)
+        while true {
+            let n = recv(sock, &buf, buf.count, 0)
+            guard n > 0 else { continue }
+            let line = stamp.string(from: Date()) + "  " + String(decoding: buf[0..<n], as: UTF8.self)
+            file.write(Data((line.hasSuffix("\n") ? line : line + "\n").utf8))
+            if file.offsetInFile > 2_000_000 {  // start again rather than grow without end
+                file.truncateFile(atOffset: 0)
+            }
+        }
+    }
+}

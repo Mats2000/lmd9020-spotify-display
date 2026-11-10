@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var activity: NSObjectProtocol?
     private var web: WebServer?
     private var relay: Relay?
+    private var displayLog: DisplayLog?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Keep running at full rate with the window closed: no App Nap.
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         show = Show()
         web = WebServer(show: show)
         relay = Relay(show: show)
+        displayLog = DisplayLog()
         let menu = NSMenu(), appItem = NSMenuItem()
         menu.addItem(appItem)
         let appMenu = NSMenu()

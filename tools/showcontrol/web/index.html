@@ -163,11 +163,12 @@ function lightsTab(s) {
   h += slider("Kick", "kick", f.kick, 0, 150, "%", { action: "fixture", id });
   if (strip_) h += `<h2>Movement</h2><div class="chips">${s.movements.map(m => chip(cap(m), m === l.movement, { ...base, movement: m })).join("")}</div>`;
   h += `<h2>Colours</h2><div class="chips">${s.sources.map(m => chip(SOURCE[m], m === l.source, { ...base, source: m })).join("")}</div>`;
-  if (l.source === "own") {
-    h += `<div class="swatches">${l.colours.map((c, i) => `<div class="sw"><input type="color" value="${c}" data-colour="${i}">${l.colours.length > 1 ? `<button class="x" data-remove="${i}">×</button>` : ""}</div>`).join("")}
+  {
+    h += `<div class="swatches"${l.source === "own" ? "" : ' style="opacity:.55"'}>${l.colours.map((c, i) => `<div class="sw"><input type="color" value="${c}" data-colour="${i}">${l.colours.length > 1 ? `<button class="x" data-remove="${i}">×</button>` : ""}</div>`).join("")}
       ${l.colours.length < 6 ? `<button class="add" id="addColour">+</button>` : ""}</div>`;
   }
   h += `<div class="chips" style="margin-top:12px">${chip("In order", !l.random, { ...base, random: false })}${chip("Random", l.random, { ...base, random: true })}</div>`;
+  h += `<div class="chips" style="margin-top:8px">${chip("With the beat", !l.bySong, { ...base, bySong: false })}${chip("With the song", l.bySong, { ...base, bySong: true })}</div>`;
   if (strip_) {
     h += slider("Spots from", "spotsLow", l.spotsLow, 1, 8, "", base) + slider("Spots to", "spotsHigh", l.spotsHigh, 1, 8, "", base);
     h += slider("Size from", "sizeLow", l.sizeLow, 1, 10, "", base) + slider("Size to", "sizeHigh", l.sizeHigh, 1, 10, "", base);
@@ -207,8 +208,8 @@ app.addEventListener("click", e => {
   const p = e.target.closest("[data-pick]");
   if (p) { picked = p.dataset.pick; store.set("showLight", picked); shape = ""; return show(state); }
   const f = state && current(state);
-  if (e.target.id === "addColour") return act({ action: "look", id: f.id, colours: [...f.look.colours, f.look.colours[f.look.colours.length - 1] || "#ffffff"] });
-  if (e.target.dataset.remove !== undefined) return act({ action: "look", id: f.id, colours: f.look.colours.filter((_, i) => i !== +e.target.dataset.remove) });
+  if (e.target.id === "addColour") return act({ action: "look", id: f.id, source: "own", colours: [...f.look.colours, f.look.colours[f.look.colours.length - 1] || "#ffffff"] });
+  if (e.target.dataset.remove !== undefined) return act({ action: "look", id: f.id, source: "own", colours: f.look.colours.filter((_, i) => i !== +e.target.dataset.remove) });
   if (e.target.id === "sceneSave") return act({ action: "sceneSave", name: document.getElementById("sceneName").value });
 });
 app.addEventListener("input", e => {
@@ -218,7 +219,7 @@ app.addEventListener("input", e => {
 app.addEventListener("change", e => {
   const t = e.target, f = state && current(state);
   if (t.dataset.key) return act({ ...JSON.parse(t.dataset.base), [t.dataset.key]: +t.value });
-  if (t.dataset.colour !== undefined) { const cs = f.look.colours.slice(); cs[+t.dataset.colour] = t.value; return act({ action: "look", id: f.id, colours: cs }); }
+  if (t.dataset.colour !== undefined) { const cs = f.look.colours.slice(); cs[+t.dataset.colour] = t.value; return act({ action: "look", id: f.id, source: "own", colours: cs }); }
   if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: f.id, name: t.value.trim() });
 });
 nav.addEventListener("click", e => {

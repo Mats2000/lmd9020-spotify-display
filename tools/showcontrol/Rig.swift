@@ -1,7 +1,8 @@
 // The rig: every light in the show, each driven by its own engine and look, 30 times a second
-// on its own queue. Kicks are timed to when they're heard; for a light too slow for that, once the
-// kick pattern repeats, the next ones are sent ahead by its own delay so it lands on them too. A light someone else
-// takes (Alexa turns it off, a routine changes it) is let go and left alone until it's taken back.
+// on its own queue. Kicks are timed to when they're heard; once the kick pattern repeats, the next
+// ones are sent ahead to each light by its own delay (and 10 ms more) so even a slow one lands on
+// them. A light someone else takes (Alexa turns it off, a routine changes it) is let go and left
+// alone until it's taken back.
 
 import Foundation
 
@@ -17,6 +18,7 @@ final class Rig {
         var lampMs = 0, bulbMs = 0  // how late kicks reach each kind of light, its own delay included
         var ahead = false           // kicks sent ahead, from the pattern
         var hitPercent = 0          // how many guessed kicks came true lately
+        var songSteps = 0           // times the song changed character
     }
 
     let govee = GoveeLamps()
@@ -39,7 +41,38 @@ final class Rig {
     private var energy = 0.0, quietFor = 0.0, lastTick = Date(), statusAt = Date(), timingAt = Date()
     private var live: [String: [RGB]] = [:]
 
-    // Kicks ahead, for the lights too slow to keep up (a Matter bulb): a beat grid is fitted through
+    // The song's character: how its energy spreads over the bands, and how loud, over ~1.5 s against
+    // ~10 s. When they part much further than they usually do in this song (a drop, a breakdown, a
+    // new section), at least 8 s after the last, it's a new step.
+    private var fastShape = [Double](repeating: 0, count: bandCount + 1), slowShape = [Double](repeating: 0, count: bandCount + 1)
+    private var songStep = 0, songChangedAt = Date()
+    private(set) var songChange = 0.0  // how far apart
+    private var changeMean = 0.15, changeDev = 0.05  // how far apart they usually are, over ~20 s
+
+    private func followSong(_ r: Analyzer.Reading, dt: Double, now: Date) {
+        guard r.playing else { return }
+        let total = Double(r.bands.reduce(0) { $0 + Int($1) })
+        guard total > 0 else { return }
+        var shape = r.bands.map { Double($0) / total }
+        shape.append(energy * 0.5)
+        for i in shape.indices {
+            fastShape[i] += (shape[i] - fastShape[i]) * min(1, dt / 1.5)
+            slowShape[i] += (shape[i] - slowShape[i]) * min(1, dt / 10)
+        }
+        songChange = zip(fastShape, slowShape).reduce(0) { $0 + abs($1.0 - $1.1) }
+        let a = min(1, dt / 20)
+        changeMean += (songChange - changeMean) * a
+        changeDev += (abs(songChange - changeMean) - changeDev) * a
+        if songChange > max(0.3, changeMean + 3 * changeDev) && now.timeIntervalSince(songChangedAt) > 8 {
+            songStep += 1
+            songChangedAt = now
+            kickLog?.write(Data(String(format: "song %.4f %d %.3f\n", Sync.now, songStep, songChange).utf8))
+            slowShape = fastShape  // the new section is the measure from here
+        }
+    }
+
+    // Kicks ahead, for every light (a Matter bulb can't keep up otherwise, and the lamp's Wi-Fi is
+    // often late): a beat grid is fitted through
     // the last 8 s of kicks (which averages out their few tens of ms of wobble), and each sixteenth
     // of it that had a kick in both of the last two bars is guessed to have one again. Guesses are
     // scored as they come true or not, and sent only while most do.
@@ -48,7 +81,8 @@ final class Rig {
     private var hits = 0.0, scored = 0, lastStrength: Float = 0.8
     private var lateLamp = 0.0, lateBulb = 0.0, lastKickFrame = Date.distantPast
     private var sendingAhead: Bool { scored >= 8 && hits >= 0.7 }
-    private func slow(_ f: Fixture) -> Bool { own(f) > 0.06 }
+    // Sent ahead, a guess goes this much earlier still than a light's own delay.
+    private let spare = 0.01
 
     private let goveeOwn = 0.03
     // `defaults write com.sentiainstruments.lmd-visualizer logKicks -bool true`: every kick to
@@ -69,6 +103,8 @@ final class Rig {
             if off || dimmed { DispatchQueue.main.async { self?.onHeld?("govee:\(ip)") } }
         }
         matter.onReleased = { [weak self] name in self?.onHeld?("matter:\(name)") }
+        // A new helper drives no light yet: the next tick hands it the ones in the show again.
+        matter.onStarted = { [weak self] in self?.queue.async { self?.driving = self?.driving.filter { !$0.hasPrefix("matter:") } ?? [] } }
         matter.start()
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: 1.0 / 30, leeway: .milliseconds(2))
@@ -138,13 +174,13 @@ final class Rig {
             let heard = Sync.heard(played)
             self.kickLog?.write(Data(String(format: "%.4f %.4f %.3f %.4f %.4f\n", heard, period, strength, Sync.now, played).utf8))
             self.lastStrength = strength
-            var covered = false  // the slow lights already had it
+            var covered = false  // every light already had it, sent ahead
             for g in self.guesses where abs(g.at - heard) < 0.05 {
                 covered = covered || g.sent
                 self.score(true)
             }
             self.guesses.removeAll { abs($0.at - heard) < 0.05 }
-            self.flashAll(strength, heard: heard, skipSlow: covered)
+            if !covered { self.flashAll(strength, heard: heard) }
             self.heardKicks.removeAll { heard - $0 > 8 }
             self.heardKicks.append(heard)
             if period > 0.25 && period < 1.1, let grid = self.fit(period) { self.guessAhead(grid, from: heard) }
@@ -186,8 +222,8 @@ final class Rig {
             let g = Guess(at: at, sent: sendingAhead && plan.lampsOn, id: guessID)
             guesses.append(g)
             guard g.sent else { continue }
-            for f in plan.fixtures where driving.contains(f.id) && slow(f) {
-                let wait = at - own(f) - Sync.now
+            for f in plan.fixtures where driving.contains(f.id) {
+                let wait = at - own(f) - spare - Sync.now
                 guard wait > 0.005 else { continue }
                 let id = f.id
                 queue.asyncAfter(deadline: .now() + wait) { [weak self] in
@@ -212,9 +248,9 @@ final class Rig {
     }
 
     // A kick heard at `heard`: each light flashed as close to it as its own delay allows.
-    private func flashAll(_ strength: Float, heard: Double, skipSlow: Bool) {
+    private func flashAll(_ strength: Float, heard: Double) {
         guard plan.lampsOn else { return }
-        for f in plan.fixtures where driving.contains(f.id) && !(skipSlow && slow(f)) {
+        for f in plan.fixtures where driving.contains(f.id) {
             let wait = heard - own(f) - Sync.now
             if f.kind == .govee { lateLamp += (max(0, -wait) - lateLamp) * 0.2 } else { lateBulb += (max(0, -wait) - lateBulb) * 0.2 }
             let id = f.id
@@ -228,6 +264,9 @@ final class Rig {
 
     private func flash(_ f: Fixture, _ strength: Float) {
         let amount = Double(f.settings.kick) / 100
+        // A Matter bulb takes a kick as two commands of ~130 ms: faster than one every 250 ms and
+        // they'd queue in it, so it would fall further and further behind.
+        if f.kind == .matter, Date().timeIntervalSince(kickedAt[f.id] ?? .distantPast) < 0.25 { return }
         let e = engine(for: f)
         e.kick(strength, amount: amount)
         kickedAt[f.id] = Date()
@@ -284,10 +323,12 @@ final class Rig {
         quietFor = r.playing ? 0 : quietFor + dt
         let loud = r.playing ? Double(r.bands.reduce(0) { $0 + Int($1) }) / Double(255 * r.bands.count) : 0
         energy += (loud - energy) * min(1, dt * 6)
+        followSong(r, dt: dt, now: now)
 
         if preview.count != plan.previewSegments { preview = LampEngine(count: plan.previewSegments, look: plan.preview) }
         preview.look = plan.preview
         preview.palette = palette(for: plan.preview)
+        preview.songStep = songStep
         let shown = preview.frame(dt: dt, energy: r.playing ? energy : 0.35)
 
         for f in plan.fixtures {
@@ -301,6 +342,7 @@ final class Rig {
             let e = engine(for: f), l = f.settings.look
             e.look = l
             e.palette = palette(for: l)
+            e.songStep = songStep
             switch f.kind {
             case .govee:
                 let frame = e.frame(dt: dt, energy: energy)
@@ -320,7 +362,7 @@ final class Rig {
             timingAt = now
             let t = Timing(captureMs: Int(Sync.captureLag * 1000), bufferMs: Int(Sync.bufferLength * 1000),
                            lampMs: Int(lateLamp * 1000), bulbMs: Int(lateBulb * 1000), ahead: sendingAhead,
-                           hitPercent: Int(hits * 100))
+                           hitPercent: Int(hits * 100), songSteps: songStep)
             DispatchQueue.main.async { self.onTiming?(t) }
         }
         if wantsFrames {
@@ -335,12 +377,12 @@ final class Rig {
         _ = e.frame(dt: dt, energy: energy)
         let l = f.settings.look, base = level(f), id = f.address
         let every = [8, 4, 2, 1, 1][max(0, min(4, l.speed - 1))]
-        let step = e.beats / every
+        let step = l.bySong ? songStep : e.beats / every
         if step != lastStep[f.id] {
             lastStep[f.id] = step
             let colours = e.palette.isEmpty ? [RGB(255, 236, 210)] : e.palette
             let c = l.random ? colours.randomElement()! : colours[step % colours.count]
-            if c != matterColour[f.id] { matter.colour(id, c, fade: l.speed >= 4 ? 0 : 0.2) }
+            if c != matterColour[f.id] { matter.colour(id, c, fade: l.bySong ? 1.5 : l.speed >= 4 ? 0 : 0.2) }
             matterColour[f.id] = c
         } else if now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.3,
                   now.timeIntervalSince(kickedAt[f.id] ?? .distantPast) > 1.0,  // the kicks set it meanwhile

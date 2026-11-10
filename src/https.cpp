@@ -1,3 +1,4 @@
+#include "log.h"
 #include "https.h"
 
 #include <WiFiClient.h>
@@ -50,7 +51,7 @@ bool Https::begin() {
     br_ssl_client_init_full(sc, xc, TRUST_ANCHORS, TRUST_ANCHORS_NUM);
     // Half-duplex: one buffer, fine for request-then-response HTTP.
     br_ssl_engine_set_buffer(&sc->eng, iobuf, BR_SSL_BUFSIZE_MONO, 0);
-    Serial.printf("BearSSL ready: %u bytes\n",
+    say("BearSSL ready: %u bytes\n",
                   (unsigned)(sizeof(br_ssl_client_context) + sizeof(br_x509_minimal_context) + BR_SSL_BUFSIZE_MONO));
     return true;
 }

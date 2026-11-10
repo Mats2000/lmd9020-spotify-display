@@ -1,5 +1,6 @@
 // The window: a sidebar of pages (Display, Lights, Scenes, then TILES), each a calm Sentia page.
 
+import AppKit
 import SwiftUI
 
 struct RootView: View {
@@ -258,10 +259,19 @@ struct LightsPage: View {
                     Chip(title: Self.sourceNames[s]!, chosen: show.look.source == s) { bind(\.source).wrappedValue = s }
                 }
             }
-            if show.look.source == .own { Swatches(colours: bind(\.colours)) }
+            Swatches(colours: bind(\.colours)) { if show.look.source != .own { bind(\.source).wrappedValue = .own } }
+                .opacity(show.look.source == .own ? 1 : 0.55)
             HStack(spacing: 8) {
                 Chip(title: "In order", chosen: !show.look.random) { bind(\.random).wrappedValue = false }
                 Chip(title: "Random", chosen: show.look.random) { bind(\.random).wrappedValue = true }
+            }
+            HStack(spacing: 8) {
+                Chip(title: "With the beat", chosen: !show.look.bySong) { bind(\.followsSong).wrappedValue = false }
+                Chip(title: "With the song", chosen: show.look.bySong) { bind(\.followsSong).wrappedValue = true }
+            }
+            if show.look.bySong {
+                Text("One colour at a time; the next when the song changes character (a drop, a breakdown, a new part). Changes so far: \(show.timing.songSteps).")
+                    .font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
             }
         }
         VStack(alignment: .leading, spacing: 26) {
@@ -435,36 +445,99 @@ struct LampDrawing: View {
 }
 
 // The look's own colours: click one to change it, its x (on hover) to remove it, + to add (up to six).
+// The look's own colours: click one to change it in the colour panel (it keeps changing as you
+// drag), its × (on hover) to remove it, + to add one (up to six) and change it straight away.
 struct Swatches: View {
     @Binding var colours: [RGB]
+    var edited: () -> Void = {}  // a colour was chosen: the look uses its own colours from now on
     @State private var hovered: Int?
+    @State private var editing: Int?
+
+    private func open(_ i: Int) {
+        editing = i
+        ColourPanel.shared.open(colours[i]) { c in
+            guard i < colours.count else { return }
+            colours[i] = c
+            edited()
+        }
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             ForEach(colours.indices, id: \.self) { i in
-                ZStack {
+                Button { open(i) } label: {
                     Circle().fill(colours[i].color).frame(width: 26, height: 26)
-                        .overlay(Circle().stroke(Sentia.line, lineWidth: 1))
-                    ColorPicker("", selection: Binding(get: { colours[i].color }, set: { colours[i] = RGB($0) }), supportsOpacity: false)
-                        .labelsHidden().frame(width: 26, height: 26).opacity(0.02)
+                        .overlay(Circle().stroke(editing == i ? Sentia.periwinkle : Sentia.line, lineWidth: editing == i ? 2 : 1))
+                        .padding(2)
                 }
+                .buttonStyle(.plain)
                 .overlay(alignment: .topTrailing) {
                     if colours.count > 1 && hovered == i {
-                        Button { colours.remove(at: i) } label: {
+                        Button {
+                            if editing == i { ColourPanel.shared.close(); editing = nil }
+                            colours.remove(at: i)
+                            edited()
+                        } label: {
                             Image(systemName: "xmark").font(.system(size: 7, weight: .semibold)).foregroundColor(Sentia.ink2)
                                 .frame(width: 14, height: 14).background(Circle().fill(Sentia.ink)).overlay(Circle().stroke(Sentia.line, lineWidth: 1))
-                        }.buttonStyle(.plain).offset(x: 5, y: -5)
+                        }.buttonStyle(.plain).offset(x: 4, y: -4)
                     }
                 }
                 .onHover { hovered = $0 ? i : (hovered == i ? nil : hovered) }
-                .contextMenu { if colours.count > 1 { Button("Remove") { colours.remove(at: i) } } }
+                .contextMenu { if colours.count > 1 { Button("Remove") { colours.remove(at: i); edited() } } }
             }
             if colours.count < 6 {
-                Button { colours.append(colours.last ?? RGB(255, 255, 255)) } label: {
+                Button {
+                    colours.append((colours.last ?? RGB(255, 0, 255)).turned(by: 60))
+                    edited()
+                    open(colours.count - 1)
+                } label: {
                     Image(systemName: "plus").font(.system(size: 11, weight: .light)).foregroundColor(Sentia.ink2)
-                        .frame(width: 26, height: 26).overlay(Circle().stroke(Sentia.line, lineWidth: 1))
+                        .frame(width: 26, height: 26).overlay(Circle().stroke(Sentia.line, lineWidth: 1)).padding(2)
                 }.buttonStyle(.plain)
             }
         }
+        .onDisappear { ColourPanel.shared.close() }
+    }
+}
+
+// The system colour panel, aimed at one colour at a time.
+final class ColourPanel: NSObject {
+    static let shared = ColourPanel()
+    private var change: ((RGB) -> Void)?
+
+    func open(_ c: RGB, _ change: @escaping (RGB) -> Void) {
+        let p = NSColorPanel.shared
+        self.change = nil  // setting the panel's colour below mustn't count as a choice
+        p.showsAlpha = false
+        p.isContinuous = true
+        p.color = NSColor(srgbRed: CGFloat(c.r) / 255, green: CGFloat(c.g) / 255, blue: CGFloat(c.b) / 255, alpha: 1)
+        p.setTarget(self)
+        p.setAction(#selector(changed(_:)))
+        self.change = change
+        p.orderFront(nil)
+    }
+
+    func close() {
+        change = nil
+        NSColorPanel.shared.orderOut(nil)
+    }
+
+    @objc private func changed(_ p: NSColorPanel) {
+        let n = p.color.usingColorSpace(.sRGB) ?? .white
+        change?(RGB(Int(n.redComponent * 255), Int(n.greenComponent * 255), Int(n.blueComponent * 255)))
+    }
+}
+
+extension RGB {
+    // The same colour with its hue turned, for a new swatch that isn't a copy of the last.
+    func turned(by degrees: Double) -> RGB {
+        let r = Double(self.r) / 255, g = Double(self.g) / 255, b = Double(self.b) / 255
+        let mx = max(r, g, b), mn = min(r, g, b), c = mx - mn
+        var h = 0.0
+        if c > 0 { h = mx == r ? ((g - b) / c).truncatingRemainder(dividingBy: 6) : mx == g ? (b - r) / c + 2 : (r - g) / c + 4 }
+        h = (h * 60 + degrees + 720).truncatingRemainder(dividingBy: 360)
+        return RGB(hue: h, saturation: mx > 0 && c > 0 ? c / mx : 1, value: max(mx, 0.6))
     }
 }
 

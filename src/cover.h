@@ -10,6 +10,8 @@
 bool fetchCover(const String& url, int imageWidth, const String& thumbUrl, int thumbWidth, uint32_t* dst,
                 ScenePalette& pal, int& colours);
 
-// The same from JPEGs already in memory (a prefetched cover); thumbLen 0: no colours of its own.
-bool decodeCover(const uint8_t* thumb, size_t thumbLen, int thumbWidth, const uint8_t* image, size_t imageLen,
-                 int imageWidth, uint32_t* dst, ScenePalette& pal, int& colours);
+// The same from JPEGs saved in a flash partition (a prefetched cover), at those offsets;
+// thumbLen 0: no colours of its own.
+#include <esp_partition.h>
+bool decodeCover(const esp_partition_t* part, uint32_t thumbAt, size_t thumbLen, int thumbWidth, uint32_t imageAt,
+                 size_t imageLen, int imageWidth, uint32_t* dst, ScenePalette& pal, int& colours);

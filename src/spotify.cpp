@@ -1,3 +1,4 @@
+#include "log.h"
 #include "spotify.h"
 
 #include <ArduinoJson.h>
@@ -34,7 +35,7 @@ static String urlEncode(const String& s) {
 }
 
 void SpotifyClient::begin() {
-    if (!https.begin()) Serial.println("Out of memory for TLS");
+    if (!https.begin()) say("%s\n", "Out of memory for TLS");
 
     // The latest refresh token lives in flash (Spotify may rotate it); a new one in secrets.h wins.
     Preferences prefs;
@@ -59,7 +60,7 @@ bool SpotifyClient::refreshAccessToken(SpotifyResult& failure) {
     if (code > 0) https.readString(body, 4096);
 
     if (code != 200) {
-        Serial.printf("Spotify token refresh failed: HTTP %d %s %s\n", code, code < 0 ? https.lastError() : "",
+        say("Spotify token refresh failed: HTTP %d %s %s\n", code, code < 0 ? https.lastError() : "",
                       body.c_str());
         // 400/401: bad credentials or token; anything else is retried.
         if (code == 400 || code == 401) failure = SpotifyResult::AuthError;
@@ -68,7 +69,7 @@ bool SpotifyClient::refreshAccessToken(SpotifyResult& failure) {
 
     JsonDocument doc;
     if (deserializeJson(doc, body) || !doc["access_token"].is<const char*>()) {
-        Serial.println("Spotify token refresh: unexpected response");
+        say("%s\n", "Spotify token refresh: unexpected response");
         return false;
     }
     accessToken_ = doc["access_token"].as<const char*>();
@@ -82,9 +83,9 @@ bool SpotifyClient::refreshAccessToken(SpotifyResult& failure) {
         prefs.begin("spotify", false);
         prefs.putString("rt", refreshToken_);
         prefs.end();
-        Serial.println("Spotify issued a new refresh token; saved");
+        say("%s\n", "Spotify issued a new refresh token; saved");
     }
-    Serial.println("Spotify access token refreshed");
+    say("%s\n", "Spotify access token refreshed");
     return true;
 }
 
@@ -183,11 +184,11 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
     if (code == 429) {
         retryAfterMs = https.retryAfterS() * 1000;
         if (retryAfterMs < 5000) retryAfterMs = 5000;
-        Serial.printf("Spotify rate limit, waiting %u s\n", retryAfterMs / 1000);
+        say("Spotify rate limit, waiting %u s\n", retryAfterMs / 1000);
         return SpotifyResult::RateLimited;
     }
     if (code != 200) {
-        Serial.printf("Spotify currently-playing: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
+        say("Spotify currently-playing: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
         return SpotifyResult::NetError;
     }
     // Keep only what the display uses, parsing as the reply arrives.
@@ -200,7 +201,7 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
     HttpsBodyReader body;
     DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
     if (err) {
-        Serial.printf("Spotify JSON: %s\n", err.c_str());
+        say("Spotify JSON: %s\n", err.c_str());
         https.close();
         return SpotifyResult::NetError;
     }
@@ -258,7 +259,7 @@ SpotifyResult SpotifyClient::next(Track& track) {
     if (code == 204) return SpotifyResult::Nothing;
     if (code == 401) accessToken_ = "";
     if (code != 200) {
-        Serial.printf("Spotify queue: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
+        say("Spotify queue: HTTP %d %s\n", code, code < 0 ? https.lastError() : "");
         if (code == 429) https.close();
         return code == 429 ? SpotifyResult::RateLimited : SpotifyResult::NetError;
     }
