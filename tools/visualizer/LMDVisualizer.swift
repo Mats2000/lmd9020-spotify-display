@@ -328,6 +328,186 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 
+// MARK: - Govee lamps
+
+// Govee's LAN API (turn on "LAN Control" for the lamp in the Govee Home app): lamps answer a
+// scan sent to 239.255.255.250:4001 on that group's port 4002 (so the listener must join the
+// group), and take commands on their port 4003. Their own state is read first and put back
+// when the show stops.
+final class GoveeLights {
+    private let sock: Int32
+    private let lock = NSLock()
+    private var found: [String: String] = [:]  // address -> model
+    private var colour: [UInt8] = []
+    private var brightness = -1
+    private var brightnessAt = Date.distantPast
+    private var saved: [String: [String: Any]] = [:]  // address -> the lamp's own colour and brightness
+    private(set) var showing = false
+
+    init() {
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        var yes: Int32 = 1
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var local = sockaddr_in()
+        local.sin_family = sa_family_t(AF_INET)
+        local.sin_port = UInt16(4002).bigEndian
+        local.sin_addr.s_addr = INADDR_ANY
+        _ = withUnsafePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        var group = ip_mreq(imr_multiaddr: in_addr(s_addr: inet_addr("239.255.255.250")), imr_interface: in_addr(s_addr: INADDR_ANY))
+        setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &group, socklen_t(MemoryLayout<ip_mreq>.size))
+        Thread { self.listen() }.start()
+    }
+
+    var lamps: [String: String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return found
+    }
+
+    func discover() {
+        let scan = #"{"msg":{"cmd":"scan","data":{"account_topic":"reserve"}}}"#
+        send(scan, to: "239.255.255.250", port: 4001)
+        send(scan, to: "255.255.255.255", port: 4001)
+    }
+
+    // The whole lamp: a colour (sent when it changes) and a brightness 1...100 (at most ten a second).
+    func set(_ rgb: [UInt8], brightness b: Int) {
+        let targets = Array(lamps.keys)
+        guard !targets.isEmpty else { return }
+        if rgb != colour {
+            colour = rgb
+            let cmd = #"{"msg":{"cmd":"colorwc","data":{"color":{"r":\#(rgb[0]),"g":\#(rgb[1]),"b":\#(rgb[2])},"colorTemInKelvin":0}}}"#
+            for ip in targets { send(cmd, to: ip, port: 4003) }
+        }
+        let b = max(1, min(100, b))
+        if abs(b - brightness) >= 4 && Date().timeIntervalSince(brightnessAt) > 0.1 {
+            brightness = b
+            brightnessAt = Date()
+            let cmd = #"{"msg":{"cmd":"brightness","data":{"value":\#(b)}}}"#
+            for ip in targets { send(cmd, to: ip, port: 4003) }
+        }
+    }
+
+    // Starting the show: remember each lamp as it is, and make sure it's on.
+    func start() {
+        guard !showing else { return }
+        showing = true
+        colour = []
+        brightness = -1
+        for ip in lamps.keys {
+            send(#"{"msg":{"cmd":"devStatus","data":{}}}"#, to: ip, port: 4003)
+            send(#"{"msg":{"cmd":"turn","data":{"value":1}}}"#, to: ip, port: 4003)
+        }
+    }
+
+    // Stopping it: each lamp back to its own colour, brightness and on or off.
+    func stop() {
+        guard showing else { return }
+        showing = false
+        lock.lock()
+        let states = saved
+        lock.unlock()
+        for (ip, st) in states {
+            if let c = st["color"] as? [String: Any], let r = c["r"] as? Int, let g = c["g"] as? Int, let b = c["b"] as? Int {
+                let k = st["colorTemInKelvin"] as? Int ?? 0
+                send(#"{"msg":{"cmd":"colorwc","data":{"color":{"r":\#(r),"g":\#(g),"b":\#(b)},"colorTemInKelvin":\#(k)}}}"#, to: ip, port: 4003)
+            }
+            if let level = st["brightness"] as? Int { send(#"{"msg":{"cmd":"brightness","data":{"value":\#(level)}}}"#, to: ip, port: 4003) }
+            if st["onOff"] as? Int == 0 { send(#"{"msg":{"cmd":"turn","data":{"value":0}}}"#, to: ip, port: 4003) }
+        }
+    }
+
+    private func send(_ text: String, to host: String, port: UInt16) {
+        var a = sockaddr_in()
+        a.sin_family = sa_family_t(AF_INET)
+        a.sin_port = port.bigEndian
+        inet_pton(AF_INET, host, &a.sin_addr)
+        let bytes = Array(text.utf8)
+        _ = withUnsafePointer(to: &a) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                sendto(sock, bytes, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+    }
+
+    private func listen() {
+        var buf = [UInt8](repeating: 0, count: 2048)
+        while true {
+            var from = sockaddr_in()
+            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let n = withUnsafeMutablePointer(to: &from) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(sock, &buf, buf.count, 0, $0, &len) }
+            }
+            guard n > 0,
+                  let json = try? JSONSerialization.jsonObject(with: Data(buf[0..<n])) as? [String: Any],
+                  let msg = json["msg"] as? [String: Any], let data = msg["data"] as? [String: Any] else { continue }
+            var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            inet_ntop(AF_INET, &from.sin_addr, &text, socklen_t(INET_ADDRSTRLEN))
+            if msg["cmd"] as? String == "devStatus" {  // a lamp's own state, to put back later
+                lock.lock()
+                if saved[String(cString: text)] == nil { saved[String(cString: text)] = data }
+                lock.unlock()
+                continue
+            }
+            guard msg["cmd"] as? String == "scan" else { continue }
+            let ip = (data["ip"] as? String) ?? String(cString: text)
+            lock.lock()
+            let isNew = found[ip] == nil
+            found[ip] = (data["sku"] as? String) ?? "Govee"
+            lock.unlock()
+            if isNew { DispatchQueue.main.async { self.onFound?() } }
+        }
+    }
+
+    var onFound: (() -> Void)?
+}
+
+// The cover's strongest colours (up to three, 40 degrees apart), bright, for the lamps.
+func coverColours(_ image: CGImage) -> [[UInt8]] {
+    let size = 24
+    let px = rgb(image, size: size)
+    var weight = [Double](repeating: 0, count: 36), sat = [Double](repeating: 0, count: 36)
+    for i in 0..<(size * size) {
+        let r = Double(px[i * 3]) / 255, g = Double(px[i * 3 + 1]) / 255, b = Double(px[i * 3 + 2]) / 255
+        let mx = max(r, g, b), mn = min(r, g, b), c = mx - mn
+        guard c > 0.1, mx > 0.15 else { continue }
+        var h = mx == r ? (g - b) / c : (mx == g ? (b - r) / c + 2 : (r - g) / c + 4)
+        h = (h * 60).truncatingRemainder(dividingBy: 360)
+        if h < 0 { h += 360 }
+        let bin = Int(h / 10) % 36
+        weight[bin] += c * c
+        sat[bin] += c * c * c / mx
+    }
+    var picked: [Int] = []
+    while picked.count < 3 {
+        var best = -1
+        for i in 0..<36 where !picked.contains(where: { min(abs($0 - i), 36 - abs($0 - i)) < 4 }) {
+            if best < 0 || weight[i] > weight[best] { best = i }
+        }
+        guard best >= 0, weight[best] > 0, picked.isEmpty || weight[best] > weight[picked[0]] / 6 else { break }
+        picked.append(best)
+    }
+    if picked.isEmpty { return [[255, 236, 210]] }  // a grey cover: warm white
+    return picked.map { bin in
+        let s = max(0.6, min(1, sat[bin] / max(weight[bin], 1e-6)))
+        let h = Double(bin) * 10 + 5, c = s, x = c * (1 - abs((h / 60).truncatingRemainder(dividingBy: 2) - 1)), m = 1 - c
+        let (r, g, b): (Double, Double, Double) = h < 60 ? (c, x, 0) : h < 120 ? (x, c, 0) : h < 180 ? (0, c, x) : h < 240 ? (0, x, c) : h < 300 ? (x, 0, c) : (c, 0, x)
+        return [UInt8((r + m) * 255), UInt8((g + m) * 255), UInt8((b + m) * 255)]
+    }
+}
+
+// The lamps' colours for each fixed scheme (ColourScheme order, after Cover Colours).
+let schemeLampColours: [[[UInt8]]] = [
+    [[255, 0, 255], [148, 171, 249], [106, 34, 192]],    // Sentia: pink, light blue, purple
+    [[120, 188, 210], [197, 235, 245], [40, 140, 200]],  // Ice
+    [[250, 160, 50], [170, 70, 10], [255, 210, 140]],     // Amber
+    [[150, 130, 210], [150, 220, 200], [250, 200, 225]], // Soft Club
+]
+
 // MARK: - Spotify's song and cover, for the preview
 
 final class NowPlayingWatcher {
@@ -420,6 +600,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let meter = Meter()
     private let allow = NSButton(title: "Allow Recording…", target: nil, action: nil)
     private let login = NSButton(checkboxWithTitle: "Open at login", target: nil, action: nil)
+    private let lightsBox = NSButton(checkboxWithTitle: "Govee lights", target: nil, action: nil)
+    private let govee = GoveeLights()
+    private var lampColours: [[UInt8]] = [[255, 236, 210]]  // the cover's, for Cover Colours
+    private var lampBeats = 0, lampHeld = false, lampFlash = 0.0, lampEnergy = 0.0
+    private var lampQuietSince: Date?
     private let stylePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let schemePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private var activity: NSObjectProtocol?
@@ -443,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyStyle()
         watcher.onNewTrack = { [weak self] track, image in
             if self?.shuffling == true { self?.shuffle() }
+            if let image { self?.lampColours = coverColours(image) }
             if let image {
                 let cover = rgb(image, size: 320), thumb = rgb(image, size: 64)
                 cover.withUnsafeBufferPointer { c in
@@ -458,9 +644,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateCapture()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.updateCapture() }
         Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.tick() }
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 15, repeats: true) { [weak self] _ in self?.driveLamps() }
+        govee.onFound = { [weak self] in self?.lampQuietSince = nil }
+        govee.discover()
+        var scans = 0
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in  // until a lamp answers, then each minute
+            guard let self else { return }
+            scans += 1
+            if self.govee.lamps.isEmpty || scans % 6 == 0 { self.govee.discover() }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationWillTerminate(_ notification: Notification) { govee.stop() }  // the lamps as they were
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window.makeKeyAndOrderFront(nil)
@@ -472,6 +669,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // the app may not ask Spotify what it's doing, it captures whenever Spotify is open.
     private var quietSince: Date?
     private var starting = false
+
+    // The lamps follow the music: one of the colours a bar (the cover's, or the scheme's),
+    // brightness with the loudness, a flash on each kick; dim and still when it's quiet.
+    private func driveLamps() {
+        guard lightsBox.state == .on, !govee.lamps.isEmpty else { return }
+        let scheme = Int(analyzer.scheme)
+        let colours = scheme == 0 || scheme > schemeLampColours.count ? lampColours : schemeLampColours[scheme - 1]
+        let r = analyzer.reading
+        guard r.playing, analyzer.enabled else {  // ten seconds of quiet: the lamps go back to how they were
+            let since = lampQuietSince ?? Date()
+            lampQuietSince = since
+            if Date().timeIntervalSince(since) > 10 { govee.stop() }
+            return
+        }
+        lampQuietSince = nil
+        govee.start()
+        let loud = Double(r.bands.reduce(0) { $0 + Int($1) }) / Double(255 * r.bands.count)
+        lampEnergy += (loud - lampEnergy) * 0.2
+        let beat = Double(r.beat) / 255
+        if beat > 0.6 && !lampHeld {
+            lampHeld = true
+            lampBeats += 1
+            lampFlash = 1
+        }
+        if beat < 0.35 { lampHeld = false }
+        lampFlash *= 0.7
+        govee.set(colours[(lampBeats / 4) % colours.count], brightness: Int(25 + 50 * min(1, lampEnergy * 1.6) + 25 * lampFlash))
+    }
+
+    @objc private func toggleLights() {
+        UserDefaults.standard.set(lightsBox.state == .on, forKey: "lights")
+        if lightsBox.state == .off { govee.stop() }
+    }
 
     private func updateCapture() {
         watcher.poll()
@@ -557,6 +787,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             parts.append(watcher.paused ? "Spotify is paused" : "Spotify is quiet")
         }
         parts.append(link.address.map { "display at \($0)" } ?? "looking for the display…")
+        if lightsBox.state == .on {
+            let lamps = govee.lamps
+            parts.append(lamps.isEmpty ? "no Govee lamp heard" : lamps.values.sorted().joined(separator: ", "))
+        }
         status.stringValue = parts.joined(separator: "  ·  ")
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
@@ -644,6 +878,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         login.target = self
         login.action = #selector(toggleLogin)
         login.font = sora("Regular", 11)
+        lightsBox.target = self
+        lightsBox.action = #selector(toggleLights)
+        lightsBox.font = sora("Regular", 11)
+        lightsBox.state = UserDefaults.standard.bool(forKey: "lights") ? .on : .off
         stylePicker.addItem(withTitle: "Off")
         stylePicker.addItem(withTitle: "Shuffle")
         stylePicker.menu?.addItem(.separator())
@@ -670,6 +908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (status, NSRect(x: 20, y: 44, width: 420, height: 16)),
             (allow, NSRect(x: 14, y: 8, width: 150, height: 30)),
             (login, NSRect(x: 420, y: 12, width: 120, height: 22)),
+            (lightsBox, NSRect(x: 296, y: 12, width: 116, height: 22)),
         ]
         for (view, rect) in place {
             view.frame = rect

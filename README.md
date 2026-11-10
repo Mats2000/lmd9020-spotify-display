@@ -225,6 +225,13 @@ firmware's own scene code, and picks the style:
 
 **Shuffle** in the style menu picks a new style with every song and every minute.
 
+**Govee lights** (a checkbox in the app) brings Govee lamps along, from the same analysis as the
+display, not a microphone: each bar the lamp takes the next of three colours (the cover's own,
+or the chosen scheme's), its brightness follows the loudness and every kick flashes it. Turn on
+**LAN Control** for the lamp in the Govee Home app; the app finds it on the network by itself.
+Ten seconds after the music stops, or when the box is unticked or the app quits, each lamp goes
+back to its own colour and brightness.
+
 Next to the style, the app picks the colours, for every style: **Cover Colours** (up to three
 of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** (deep purple,
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
