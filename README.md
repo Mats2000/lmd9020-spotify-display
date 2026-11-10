@@ -308,7 +308,8 @@ bulb takes 100-160 ms a command) gets kicks ahead: a beat grid is fitted through
 kicks, each sixteenth that had a kick in both of the last two bars is guessed to have one again,
 and the guesses are sent its own delay early (and 10 ms more) once 70% of them come true; every
 light gets them, since the lamp's Wi-Fi is often late too (it dozes between messages, 4-190 ms). A bulb kick goes straight
-up and falls back as soon as the bulb has it, and between kicks the bulb sits under half way up
+up and falls back as soon as the bulb has it (with the kick over 100%, straight off with no fade,
+"off with effect": the Amazon bulb has no setting for its own slow dimming), and between kicks the bulb sits under half way up
 its rhythm (darker still with the kick over 100%), so the flash shows. The Lights page shows the
 measured delays. `defaults write com.sentiainstruments.lmd-visualizer logKicks -bool true` logs
 every kick to `~/Library/Logs/Show Control/kicks.log` for study.

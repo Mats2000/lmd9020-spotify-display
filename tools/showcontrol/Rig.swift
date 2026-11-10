@@ -278,7 +278,8 @@ final class Rig {
             guard amount > 0 else { return }
             let l = f.settings.look, top = Double(l.rhythmHigh) / 100 * Double(f.settings.brightness) / 100
             let base = level(f), high = min(1, base + (top - base) * min(1, amount))
-            matter.kick(f.address, level: high, then: base, fall: amount > 1 ? 0.05 : 0.2)
+            // Over 100%: a strobe, so straight off after each kick (this bulb only dims slowly).
+            matter.kick(f.address, level: high, then: base, fall: amount > 1 ? 0.05 : 0.2, off: amount > 1)
             matterLevel[f.id] = base
             live[f.id] = [(matterColour[f.id] ?? .black).scaled(high)]
         }

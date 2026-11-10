@@ -12,6 +12,7 @@ import { ServerNode } from "@matter/main";
 import { ColorControlClient } from "@matter/main/behaviors/color-control";
 import { LevelControlClient } from "@matter/main/behaviors/level-control";
 import { OnOffClient } from "@matter/main/behaviors/on-off";
+import { execFileSync } from "node:child_process";
 import dgram from "node:dgram";
 
 const controller = await ServerNode.create(ServerNode.RootEndpoint, { id: "show-control" });
@@ -56,24 +57,24 @@ switch (command) {
     }
     case "serve": {
         await controller.start();
-        // macOS refuses a new process's first sends to the home network ("host unreachable") until
-        // its Local Network permission is checked, and matter.js then waits two minutes to try again:
-        // each light's address is sent a throwaway packet (the discard port) until one goes through.
-        const reach = async peer => {
+        // A Wi-Fi bulb dozing between messages misses the Mac's first look for it on the network, and
+        // matter.js then waits two minutes to try again: each light is pinged at its last address
+        // until it answers (the look-up is done then), up to ~3 s.
+        const wake = peer => {
             for (const a of peer.state.commissioning?.addresses ?? []) {
                 if (!a.ip?.includes(":")) continue;
-                const sock = dgram.createSocket("udp6");
-                for (let i = 0; i < 20; i++) {
-                    const ok = await new Promise(r => sock.send(Buffer.from([0]), 9, a.ip, e => r(!e)));
-                    if (ok) break;
-                    await new Promise(r => setTimeout(r, 250));
+                const [ip, iface] = a.ip.split("%");
+                for (let i = 0; i < 6; i++) {
+                    try {
+                        execFileSync("ping6", ["-c", "1", ...(iface ? ["-I", iface] : []), ip], { stdio: "ignore", timeout: 600 });
+                        break;
+                    } catch {}
                 }
-                sock.close();
             }
         };
         const all = new Map();  // id -> one light's part and show state
         for (const peer of lights()) {
-            await reach(peer);
+            wake(peer);
             await peer.start();
             all.set(peer.id, { part: lightPart(peer), busy: false, next: null, saved: null, driving: false, released: false, trip: 0 });
             console.log(`Ready: ${peer.id}`);
@@ -94,14 +95,16 @@ switch (command) {
             try {
                 if (cmd.level !== undefined && part.stateOf(LevelControlClient) !== undefined) {
                     const level = Math.max(1, Math.min(254, Math.round(cmd.level * 254)));
+                    light.ourOff = false;
                     await timed(light, () => part.commandsOf(LevelControlClient).moveToLevelWithOnOff({
                         level, transitionTime: fade, optionsMask: {}, optionsOverride: {},
                     }));
                 }
                 if (cmd.r !== undefined && part.stateOf(ColorControlClient) !== undefined) {
                     const hs = rgbToHueSat(cmd.r, cmd.g, cmd.b);
+                    // Taken while off too (the show turns it off between strobe kicks).
                     await timed(light, () => part.commandsOf(ColorControlClient).moveToHueAndSaturation({
-                        ...hs, transitionTime: fade, optionsMask: {}, optionsOverride: {},
+                        ...hs, transitionTime: fade, optionsMask: { executeIfOff: true }, optionsOverride: { executeIfOff: true },
                     }));
                 }
             } catch (e) {
@@ -117,7 +120,9 @@ switch (command) {
             light.next = cmd;
         };
         // A kick never waits: straight up (no fade), then down to `then` as soon as the bulb has it,
-        // so the flash lasts one round trip. A newer kick takes over the fall.
+        // so the flash lasts one round trip. A newer kick takes over the fall. With "off", the fall is
+        // an off with no fade instead (On/Off "off with effect": delayed all off, variant 1), for bulbs
+        // that dim slowly whatever transition they're given.
         const kick = async (light, cmd) => {
             const part = light.part;
             if (part.stateOf(LevelControlClient) === undefined) return;
@@ -125,8 +130,14 @@ switch (command) {
             const level = v => Math.max(1, Math.min(254, Math.round(v * 254)));
             const opts = { optionsMask: {}, optionsOverride: {} };
             try {
+                light.ourOff = false;
                 await timed(light, () => part.commandsOf(LevelControlClient).moveToLevelWithOnOff({ level: level(cmd.level), transitionTime: 0, ...opts }));
                 if (cmd.then === undefined || gen !== light.kicks || !light.driving) return;
+                if (cmd.off && part.stateOf(OnOffClient) !== undefined) {
+                    light.ourOff = true;
+                    await part.commandsOf(OnOffClient).offWithEffect({ effectIdentifier: 0, effectVariant: 1 });
+                    return;
+                }
                 await part.commandsOf(LevelControlClient).moveToLevelWithOnOff({
                     level: level(cmd.then), transitionTime: Math.round((cmd.fall ?? 0.15) * 10), ...opts,
                 });
@@ -185,7 +196,7 @@ switch (command) {
                 if (!light.driving || light.released) continue;
                 const p = light.part, on = p.stateOf(OnOffClient)?.onOff, c = p.stateOf(ColorControlClient);
                 if (on === true) light.seenOn = true;
-                if (light.seenOn && on === false) { release(id, light, "off"); continue; }
+                if (light.seenOn && on === false && !light.ourOff) { release(id, light, "off"); continue; }
                 if (!c) continue;
                 if (c.colorMode === 0) light.seenHue = true;
                 if (light.seenHue && c.colorMode === 2) release(id, light, "white");

@@ -482,10 +482,14 @@ final class MatterLights {
         let logFile = logs.appendingPathComponent("matter.log")
         FileManager.default.createFile(atPath: logFile.path, contents: nil)
         let log = try? FileHandle(forWritingTo: logFile)
+        var partial = ""  // a line split across reads waits for the rest
         out.fileHandleForReading.readabilityHandler = { [weak self] h in
             let data = h.availableData
             log?.write(data)
-            let text = String(decoding: data, as: UTF8.self)
+            partial += String(decoding: data, as: UTF8.self)
+            guard let end = partial.lastIndex(of: "\n") else { return }
+            let text = String(partial[..<end])
+            partial = String(partial[partial.index(after: end)...])
             for line in text.split(separator: "\n") {
                 if line.hasPrefix("Ready: ") {
                     let name = String(line.dropFirst(7))
@@ -557,9 +561,10 @@ final class MatterLights {
 
     func colour(_ id: String, _ c: RGB, fade: Double) { send(["id": id, "r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "fade": fade]) }
     func level(_ id: String, _ level: Double, fade: Double) { send(["id": id, "level": level, "fade": fade]) }
-    // Straight to `level`, then down to `then` over `fall` seconds as soon as the light has it.
-    func kick(_ id: String, level: Double, then: Double, fall: Double) {
-        send(["id": id, "level": level, "then": then, "fall": fall, "kick": true])
+    // Straight to `level`, then down to `then` over `fall` seconds as soon as the light has it, or
+    // with `off` straight off (no fade), for a strobe on a bulb that only dims slowly.
+    func kick(_ id: String, level: Double, then: Double, fall: Double, off: Bool = false) {
+        send(["id": id, "level": level, "then": then, "fall": fall, "kick": true, "off": off])
     }
     func save(_ id: String) { send(["id": id, "save": true]) }
     func restore(_ id: String) { send(["id": id, "restore": true]) }
