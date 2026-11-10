@@ -3,8 +3,15 @@
 
 import Foundation
 
+// How a single bulb (a Matter light) plays the music: it only fades slowly, so it can flash hard
+// on the kicks and go straight off between them, swell on each kick and fade through the beat, or
+// leave the kicks and follow the music's energy and character in long fades.
+enum BulbStyle: String, Codable, CaseIterable { case strobe, pulse, wash }
+
 struct FixtureSettings: Codable, Equatable {
     var on = true
+    var bulb: BulbStyle?  // nil: strobe with the kick over 100%, else pulse
+    var bulbStyle: BulbStyle { bulb ?? (kick > 100 ? .strobe : .pulse) }
     var look = LampLook.builtIn[0]  // this light's own look (presets are copied in)
     var brightness = 100            // %, on top of the look's own rhythm
     var kick = 100                  // % of the kick's flash: 0 follows the music without it
@@ -12,12 +19,13 @@ struct FixtureSettings: Codable, Equatable {
     init() {}
 
     // Older saves had no look of their own (a shared one by id) and no kick: filled in.
-    private enum Keys: String, CodingKey { case on, look, brightness, kick, lookID }
+    private enum Keys: String, CodingKey { case on, look, brightness, kick, lookID, bulb }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         on = try c.decodeIfPresent(Bool.self, forKey: .on) ?? true
         brightness = try c.decodeIfPresent(Int.self, forKey: .brightness) ?? 100
         kick = try c.decodeIfPresent(Int.self, forKey: .kick) ?? 100
+        bulb = try c.decodeIfPresent(BulbStyle.self, forKey: .bulb)
         if let l = try c.decodeIfPresent(LampLook.self, forKey: .look) {
             look = l
         } else {
@@ -32,6 +40,7 @@ struct FixtureSettings: Codable, Equatable {
         try c.encode(look, forKey: .look)
         try c.encode(brightness, forKey: .brightness)
         try c.encode(kick, forKey: .kick)
+        try c.encodeIfPresent(bulb, forKey: .bulb)
     }
 }
 

@@ -219,7 +219,7 @@ extension Show {
             "presets": looks.map { ["id": $0.id.uuidString, "name": $0.name] },
             "fixtures": fixtures.map { f in
                 ["id": f.id, "name": f.name, "kind": f.kind.rawValue, "segments": f.segments, "on": f.settings.on,
-                 "brightness": f.settings.brightness, "kick": f.settings.kick, "held": f.held,
+                 "brightness": f.settings.brightness, "kick": f.settings.kick, "held": f.held, "bulb": f.settings.bulbStyle.rawValue,
                  "look": lookJSON(f.settings.look), "preset": preset(of: f.settings.look)?.uuidString ?? "",
                  "colours": (live[f.id] ?? []).map(\.hex)] as [String: Any]
             },
@@ -243,6 +243,7 @@ extension Show {
                 if let on = a["on"] as? Bool { f.settings.on = on }
                 if let b = int("brightness", 0...100) { f.settings.brightness = b }
                 if let k = int("kick", 0...150) { f.settings.kick = k }
+                if let b = (a["bulb"] as? String).flatMap(BulbStyle.init) { f.settings.bulb = b }
                 if let n = a["name"] as? String, !n.isEmpty { f.name = String(n.prefix(40)) }
             }
         case "hold": hold(id)

@@ -228,15 +228,36 @@ struct LightsPage: View {
                 if f.held {
                     Text("Alexa has it. The show leaves it alone until you take it back.").font(.soraLight(12.5)).foregroundColor(Sentia.ink2)
                 } else {
+                    if f.kind == .matter { bulbStyle(f) }
                     VStack(alignment: .leading, spacing: 26) {
                         SentiaSlider(label: "Brightness", low: .constant(0), high: setting(\.brightness), bounds: 0...100, range: false, unit: "%")
-                        SentiaSlider(label: "Kick", low: .constant(0), high: setting(\.kick), bounds: 0...150, range: false, unit: "%")
+                        if f.kind != .matter || f.settings.bulbStyle != .wash {
+                            SentiaSlider(label: "Kick", low: .constant(0), high: setting(\.kick), bounds: 0...150, range: false, unit: "%")
+                        }
                     }
                     lookControls(f)
                 }
             }
             .frame(maxWidth: 520)
             presets(f).frame(width: 230)
+        }
+    }
+
+    static let bulbStyles: [(BulbStyle, String, String)] = [
+        (.strobe, "Strobe", "A hard flash on each kick, straight off between them. Best on sparse beats."),
+        (.pulse, "Pulse", "Up on each kick, fading back down through the beat: the bulb's slow fade as the shape."),
+        (.wash, "Wash", "No kicks: brightness with the music's energy, colour along the look's colours with how bright or bassy it sounds, in long fades."),
+    ]
+
+    private func bulbStyle(_ f: Fixture) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel(text: "Style")
+            HStack(spacing: 8) {
+                ForEach(Self.bulbStyles, id: \.0) { s in
+                    Chip(title: s.1, chosen: f.settings.bulbStyle == s.0) { show.update(f.id) { $0.settings.bulb = s.0 } }
+                }
+            }
+            Text(Self.bulbStyles.first { $0.0 == f.settings.bulbStyle }?.2 ?? "").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
         }
     }
 

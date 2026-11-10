@@ -139,7 +139,7 @@ function show(s) {
   state = s;
   const f = current(s), l = f && f.look;
   const k = [tab, s.fixtures.map(x => x.id + x.held + x.on + x.name + x.look.name + x.preset).join(), s.presets.map(p => p.id + p.name).join(),
-    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick].join(), l && JSON.stringify(l), s.style, s.scheme, s.lampsOn].join("|");
+    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick, f.bulb].join(), l && JSON.stringify(l), s.style, s.scheme, s.lampsOn].join("|");
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === tab);
   if (k !== shape) { shape = k; render(s); return; }
   for (const x of s.fixtures) for (const el of document.querySelectorAll(`[data-live="${CSS.escape(x.id)}"]`)) el.outerHTML = strip(x.colours, ` data-live="${esc(x.id)}"`);
@@ -159,8 +159,9 @@ function lightsTab(s) {
   if (f.held) {
     return h + `<div class="row" style="margin-top:14px"><span class="grow held-note">Alexa has it. The show leaves it alone.</span><button class="btn small" ${data({ action: "take", id })}>Take back</button></div>`;
   }
+  if (!strip_) h += `<h2>Style</h2><div class="chips">${[["strobe", "Strobe"], ["pulse", "Pulse"], ["wash", "Wash"]].map(([k, n]) => chip(n, f.bulb === k, { action: "fixture", id, bulb: k })).join("")}</div>`;
   h += slider("Brightness", "brightness", f.brightness, 0, 100, "%", { action: "fixture", id });
-  h += slider("Kick", "kick", f.kick, 0, 150, "%", { action: "fixture", id });
+  if (strip_ || f.bulb !== "wash") h += slider("Kick", "kick", f.kick, 0, 150, "%", { action: "fixture", id });
   if (strip_) h += `<h2>Movement</h2><div class="chips">${s.movements.map(m => chip(cap(m), m === l.movement, { ...base, movement: m })).join("")}</div>`;
   h += `<h2>Colours</h2><div class="chips">${s.sources.map(m => chip(SOURCE[m], m === l.source, { ...base, source: m })).join("")}</div>`;
   {

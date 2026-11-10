@@ -87,6 +87,7 @@ switch (command) {
                 changed.on(on => {
                     if (on !== false || !light.driving || light.released) return;
                     const now = Date.now();
+                    if (now - (light.drivenAt ?? 0) < 5000) return;  // the light settling as the show takes it (a restart puts it back first)
                     light.ownOffs = (light.ownOffs ?? []).filter(t => now - t < 1500);
                     if (light.ownOffs.length) { light.ownOffs.shift(); return; }
                     if (!light.seenOn) return;
@@ -177,6 +178,7 @@ switch (command) {
                 colour: p.stateOf(ColorControlClient) && { ...p.stateOf(ColorControlClient) },
             };
             light.driving = true;
+            light.drivenAt = Date.now();
             light.seenOn = false;
             light.seenHue = false;
         };

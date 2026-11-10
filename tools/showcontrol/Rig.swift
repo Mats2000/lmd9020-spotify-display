@@ -46,6 +46,10 @@ final class Rig {
     // new section), at least 8 s after the last, it's a new step.
     private var fastShape = [Double](repeating: 0, count: bandCount + 1), slowShape = [Double](repeating: 0, count: bandCount + 1)
     private var songStep = 0, songChangedAt = Date()
+    // How bright the sound is: where its energy sits across the bands (0 bass-heavy, 1 bright),
+    // against this song's own range lately.
+    private var brightness = 0.5, centre = 0.5, centreLow = 0.4, centreHigh = 0.6
+    private var lastPeriod = 0.0
     private(set) var songChange = 0.0  // how far apart
     private var changeMean = 0.15, changeDev = 0.05  // how far apart they usually are, over ~20 s
 
@@ -60,6 +64,11 @@ final class Rig {
             slowShape[i] += (shape[i] - slowShape[i]) * min(1, dt / 10)
         }
         songChange = zip(fastShape, slowShape).reduce(0) { $0 + abs($1.0 - $1.1) }
+        let c = r.bands.enumerated().reduce(0.0) { $0 + Double($1.offset) * Double($1.element) } / total / Double(bandCount - 1)
+        centre += (c - centre) * min(1, dt / 1.2)
+        centreLow = min(centre, centreLow + (centre - centreLow) * min(1, dt / 30))
+        centreHigh = max(centre, centreHigh + (centre - centreHigh) * min(1, dt / 30))
+        brightness = max(0, min(1, (centre - centreLow) / max(0.05, centreHigh - centreLow)))
         let a = min(1, dt / 20)
         changeMean += (songChange - changeMean) * a
         changeDev += (abs(songChange - changeMean) - changeDev) * a
@@ -162,7 +171,7 @@ final class Rig {
     private func level(_ f: Fixture) -> Double {
         let l = f.settings.look, k = Double(f.settings.kick) / 100
         let base = (Double(l.rhythmLow) + Double(l.rhythmHigh - l.rhythmLow) * 0.45 * min(1, energy * 1.5)) / 100
-        return base * Double(f.settings.brightness) / 100 * (k > 1 ? max(0.15, 1 - (k - 1) * 1.4) : 1)
+        return base * Double(f.settings.brightness) / 100 * (k > 1 && f.settings.bulbStyle != .wash ? max(0.15, 1 - (k - 1) * 1.4) : 1)
     }
 
     // MARK: Kicks
@@ -172,6 +181,7 @@ final class Rig {
         queue.async {
             self.preview.kick(strength)
             let heard = Sync.heard(played)
+            if period > 0 { self.lastPeriod = period }
             self.kickLog?.write(Data(String(format: "%.4f %.4f %.3f %.4f %.4f\n", heard, period, strength, Sync.now, played).utf8))
             self.lastStrength = strength
             var covered = false  // every light already had it, sent ahead
@@ -275,11 +285,14 @@ final class Rig {
             lastKickFrame = Date()
             send(f, e.frame(dt: 0, energy: energy))
         case .matter:
-            guard amount > 0 else { return }
+            let style = f.settings.bulbStyle
+            guard amount > 0, style != .wash else { return }
             let l = f.settings.look, top = Double(l.rhythmHigh) / 100 * Double(f.settings.brightness) / 100
             let base = level(f), high = min(1, base + (top - base) * min(1, amount))
-            // Over 100%: a strobe, so straight off after each kick (this bulb only dims slowly).
-            matter.kick(f.address, level: high, then: base, fall: amount > 1 ? 0.05 : 0.2, off: amount > 1)
+            // Strobe: straight off after the flash. Pulse: down to the base over most of the beat,
+            // the bulb's own slow fade making the shape.
+            let beat = lastPeriod > 0.25 ? lastPeriod : 0.5
+            matter.kick(f.address, level: high, then: base, fall: style == .strobe ? 0.05 : beat * 0.75, off: style == .strobe)
             matterLevel[f.id] = base
             live[f.id] = [(matterColour[f.id] ?? .black).scaled(high)]
         }
@@ -377,7 +390,8 @@ final class Rig {
     private func tickMatter(_ f: Fixture, _ e: LampEngine, now: Date, dt: Double) {
         _ = e.frame(dt: dt, energy: energy)
         let l = f.settings.look, base = level(f), id = f.address
-        let strobe = f.settings.kick > 100  // only hard changes: kicks, and colours landing while it's off
+        if f.settings.bulbStyle == .wash { return washMatter(f, e, now: now) }
+        let strobe = f.settings.bulbStyle == .strobe  // only hard changes: kicks, and colours landing while it's off
         let every = [8, 4, 2, 1, 1][max(0, min(4, l.speed - 1))]
         let step = l.bySong ? songStep : e.beats / every
         if step != lastStep[f.id] {
@@ -396,5 +410,30 @@ final class Rig {
         if now.timeIntervalSince(kickedAt[f.id] ?? .distantPast) > 0.2 {
             live[f.id] = [(matterColour[f.id] ?? .black).scaled(base)]
         }
+    }
+
+    // Wash: no kicks. Every ~0.8 s the bulb fades (over about as long) to the music's energy, and to
+    // a colour along the look's colours by the sound's character: the first when it's bass-heavy,
+    // the last when it's bright; each change of the song's character moves them along by one.
+    private func washMatter(_ f: Fixture, _ e: LampEngine, now: Date) {
+        guard now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.8 else { return }
+        levelAt[f.id] = now
+        let l = f.settings.look, id = f.address
+        var colours = e.palette.isEmpty ? [RGB(255, 236, 210)] : e.palette
+        let turn = songStep % colours.count
+        colours = Array(colours[turn...] + colours[..<turn])
+        let at = brightness * Double(colours.count - 1), k = min(colours.count - 1, Int(at))
+        let c = RGB.mix(colours[k], colours[min(colours.count - 1, k + 1)], at - Double(k))
+        let swell = (Double(l.rhythmLow) + Double(l.rhythmHigh - l.rhythmLow) * min(1, energy * 1.6)) / 100 * Double(f.settings.brightness) / 100
+        let moved = matterColour[f.id].map { abs(Int($0.r) - Int(c.r)) + abs(Int($0.g) - Int(c.g)) + abs(Int($0.b) - Int(c.b)) } ?? 999
+        if moved >= 18 {  // smaller steps aren't worth a command
+            matterColour[f.id] = c
+            matter.colour(id, c, fade: 1.0)
+        }
+        if abs(swell - (matterLevel[f.id] ?? -1)) > 0.04 {
+            matterLevel[f.id] = swell
+            matter.level(id, swell, fade: 0.9)
+        }
+        live[f.id] = [c.scaled(swell)]
     }
 }

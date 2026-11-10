@@ -253,8 +253,11 @@ under a name, called back with one click. Everything lives in
 
 - **Govee** lamps are streamed a colour per segment (all 14 on the H6076). Turn on **LAN Control**
   for the lamp in the Govee Home app; the app finds it by itself.
-- **Matter** lights (bulbs already in Alexa or Apple Home) take a new colour every few beats and
-  flash on kicks, through `tools/showcontrol/matter` (needs Node): `npm install` there once, then
+- **Matter** lights (bulbs already in Alexa or Apple Home) play in one of three styles, since a
+  bulb only fades slowly: **Strobe** (a hard flash on each kick, straight off between them),
+  **Pulse** (up on each kick, fading back down through the beat) or **Wash** (no kicks: brightness
+  with the music's energy, colour along the look's colours with how bright or bassy it sounds, in
+  long fades), through `tools/showcontrol/matter` (needs Node): `npm install` there once, then
   pair each light with the code from its home app's "share" or "add another controller":
   `node lights.js pair 01234567890 bulb`. The helper sends a light one command at a time (a kick
   first), so they can't pile up in the bulb, and reports each light's round trip. build.sh copies
