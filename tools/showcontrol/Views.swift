@@ -15,6 +15,7 @@ struct RootView: View {
                 case .lights: LightsPage(show: show)
                 case .scenes: ScenesPage(show: show)
                 case .tiles: TilesPage(show: show)
+                case .autopilot: AutopilotPage(show: show)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -560,6 +561,88 @@ extension RGB {
         if c > 0 { h = mx == r ? ((g - b) / c).truncatingRemainder(dividingBy: 6) : mx == g ? (b - r) / c + 2 : (r - g) / c + 4 }
         h = (h * 60 + degrees + 720).truncatingRemainder(dividingBy: 360)
         return RGB(hue: h, saturation: mx > 0 && c > 0 ? c / mx : 1, value: max(mx, 0.6))
+    }
+}
+
+// MARK: - Autopilot
+
+// A show director: picks the whole rig's look from the music as it goes (Autopilot.swift).
+struct AutopilotPage: View {
+    @ObservedObject var show: Show
+
+    static let styles: [(Autopilot.Style?, String, String)] = [
+        (nil, "Off", "Every light, the display and TILES as you set them."),
+        (.club, "Club", "Follows the song's arc: washes and flows in the breakdowns, grooves in the body, strobes and strikes at the peak, a hard switch on a drop. A new look about every 32 bars or at a new section."),
+        (.lounge, "Lounge", "Slow and evolving: gradients, breathing and washes, the calm visualizers, changing gently every minute or two. Never strobes."),
+        (.rave, "Rave", "Maximal: strikes, chases and sparkles, the bulb strobing, the colour schemes turning over, a new look every 8 bars."),
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                PageHeader(title: "Autopilot")
+                HStack(alignment: .top, spacing: 56) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Self.styles, id: \.1) { s in
+                            Button { show.autopilot = s.0 } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(s.1).font(.sora(15))
+                                    Text(s.2).font(.soraLight(12)).foregroundColor(Sentia.ink2).fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(RoundedRectangle(cornerRadius: 16).fill(show.autopilot == s.0 ? Sentia.panel : Color.clear))
+                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(show.autopilot == s.0 ? Sentia.periwinkle : Sentia.line, lineWidth: show.autopilot == s.0 ? 1.2 : 1))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .frame(width: 420)
+                    VStack(alignment: .leading, spacing: 14) {
+                        SectionLabel(text: "Now")
+                        if show.autopilot == nil {
+                            Text("Off.").font(.soraLight(13)).foregroundColor(Sentia.ink2)
+                        } else if let r = show.autoRecipe {
+                            Text(r.name).font(.exo(22))
+                            Text("The music: \(show.autoTier.rawValue)\(show.timing.playing ? "" : " (paused)")").font(.sora(13))
+                            meter
+                            VStack(alignment: .leading, spacing: 4) {
+                                line("Lamps", "\(r.movement.rawValue.capitalized), speed \(r.speed), \(r.source == .cover ? "the cover's colours" : r.source == .scheme ? "the display's colours" : "own colours")")
+                                line("Bulb", r.bulb.rawValue.capitalized)
+                                line("Display", "\(r.display), \(r.scheme)")
+                                line("TILES", show.tiles.on ? "\(r.tiles)".capitalized : "not taken over (the TILES page)")
+                            }
+                            Text("Drops caught: \(show.pilot.drops)").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                        } else {
+                            Text("Waiting for the music.").font(.soraLight(13)).foregroundColor(Sentia.ink2)
+                        }
+                        Text("It lies over your settings and saves nothing: off, everything is as you set it.")
+                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 18)
+                    }
+                    .frame(width: 340, alignment: .leading)
+                }
+                .padding(.bottom, 40)
+            }
+            .padding(.horizontal, 40)
+        }
+    }
+
+    private var meter: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Sentia.line).frame(height: 3)
+                Capsule().fill(Sentia.periwinkle).frame(width: g.size.width * min(1, show.timing.energy * 1.4), height: 3)
+            }
+        }
+        .frame(height: 6)
+    }
+
+    private func line(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label).font(.sora(12)).foregroundColor(Sentia.ink2).frame(width: 64, alignment: .leading)
+            Text(value).font(.sora(12.5))
+        }
     }
 }
 

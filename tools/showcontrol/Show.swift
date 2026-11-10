@@ -9,7 +9,7 @@ let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava", "Rave", "Fractal
 let schemes = ["Cover Colours", "Sentia", "Ice", "Amber", "Soft Club"]  // ColourScheme order
 
 final class Show: ObservableObject {
-    enum Page: String, CaseIterable { case display = "Display", lights = "Lights", scenes = "Scenes", tiles = "TILES" }
+    enum Page: String, CaseIterable { case display = "Display", lights = "Lights", autopilot = "Autopilot", scenes = "Scenes", tiles = "TILES" }
 
     @Published var page: Page = Page(rawValue: UserDefaults.standard.string(forKey: "page") ?? "") ?? .display {
         didSet { UserDefaults.standard.set(page.rawValue, forKey: "page"); wantFrames() }
@@ -38,7 +38,18 @@ final class Show: ObservableObject {
     @Published var speakerMs = 0
     @Published var timing = Rig.Timing()
     // TILES' LEDs in the show (the TILES page).
-    @Published var tiles: TilesLink.Mode { didSet { saveTiles(); rig.tiles.set(tiles) } }
+    @Published var tiles: TilesLink.Mode { didSet { saveTiles(); applyTiles() } }
+    // The autopilot (nil: off) and what it's running now; it lies over the settings, unsaved.
+    @Published var autopilot: Autopilot.Style? {
+        didSet {
+            UserDefaults.standard.set(autopilot?.rawValue, forKey: "autopilot")
+            if let s = autopilot { pilot.set(s); if autoRecipe == nil { pilot.newSong(title + " ") } } else { autoRecipe = nil }
+            applyAutopilot()
+        }
+    }
+    @Published var autoRecipe: Autopilot.Recipe?
+    @Published var autoTier = Autopilot.Tier.groove
+    let pilot: Autopilot
     @Published var tilesName: String?
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -70,6 +81,9 @@ final class Show: ObservableObject {
         lampsOn = d.object(forKey: "lights") as? Bool ?? true
         looks = LookStore.load()
         selected = d.string(forKey: "light")
+        let style = d.string(forKey: "autopilot").flatMap(Autopilot.Style.init)
+        pilot = Autopilot(style: style ?? .club)
+        autopilot = style
         tiles = d.data(forKey: "tiles").flatMap { try? JSONDecoder().decode(TilesLink.Mode.self, from: $0) } ?? TilesLink.Mode()
         trimMs = d.integer(forKey: "trim")
         Sync.trim = Double(d.integer(forKey: "trim")) / 1000
@@ -93,13 +107,26 @@ final class Show: ObservableObject {
             self?.previewSegments = preview
         }
         rig.onHeld = { [weak self] id in self?.hold(id) }
-        rig.onTiming = { [weak self] t in if self?.timing != t { self?.timing = t } }
+        rig.onTiming = { [weak self] t in
+            guard let self else { return }
+            if self.timing != t { self.timing = t }
+            if self.autopilot != nil {
+                self.pilot.step(t)
+                if self.autoTier != self.pilot.tier { self.autoTier = self.pilot.tier }
+            }
+        }
+        pilot.onChange = { [weak self] r in
+            guard let self, self.autopilot != nil else { return }
+            self.autoRecipe = r
+            self.applyAutopilot()
+        }
         rig.tiles.set(tiles)
         rig.govee.onFound = { [weak self] in self?.refreshFixtures() }
         watcher.onNewTrack = { [weak self] track, image in
             guard let self else { return }
             self.title = track.title
             self.artist = track.artist
+            if self.autopilot != nil { self.pilot.newSong(track.title + "\n" + track.artist) }
             if self.shuffling { self.shuffle() }
             if let image { self.rig.setCover(coverColours(image)) }
             if let image {
@@ -140,7 +167,29 @@ final class Show: ObservableObject {
         shuffledAt = Date()
     }
 
+    private func applyAutopilot() {
+        applyStyle()
+        applyTiles()
+        pushPlan()
+    }
+
+    private func applyTiles() {
+        var t = tiles
+        if autopilot != nil, let r = autoRecipe {
+            t.animation = r.tiles
+            t.glow = r.glow
+        }
+        rig.tiles.set(t)
+    }
+
     private func applyStyle() {
+        if autopilot != nil, let r = autoRecipe, styleName != "Off" {
+            analyzer.enabled = true
+            shuffling = false
+            analyzer.style = UInt8(styles.firstIndex(of: r.display) ?? 0)
+            analyzer.scheme = UInt8(schemes.firstIndex(of: r.scheme) ?? 0)
+            return
+        }
         analyzer.enabled = styleName != "Off"
         shuffling = styleName == "Shuffle"
         if shuffling { shuffle() } else { analyzer.style = UInt8(styles.firstIndex(of: styleName) ?? 0) }
@@ -356,6 +405,24 @@ final class Show: ObservableObject {
     private func pushPlan() {
         var p = Rig.Plan()
         p.fixtures = fixtures
+        if autopilot != nil, let r = autoRecipe {
+            p.fixtures = fixtures.map { f in
+                var f = f
+                var l = f.settings.look
+                l.movement = r.movement
+                l.speed = r.speed
+                l.source = r.source
+                l.direction = r.direction
+                l.rhythmLow = r.rhythm.0
+                l.rhythmHigh = r.rhythm.1
+                l.random = r.random
+                l.followsSong = false
+                f.settings.look = l
+                f.settings.kick = f.kind == .matter ? r.kick : min(r.kick, 120)
+                if f.kind == .matter { f.settings.bulb = r.bulb }
+                return f
+            }
+        }
         p.preview = look
         p.previewSegments = light.map { $0.kind == .govee ? $0.segments : 1 } ?? 14
         p.lampsOn = lampsOn

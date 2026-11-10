@@ -247,6 +247,15 @@ keeps colours, how often they change, and rhythm. **Presets** are looks saved to
 copies one into the open light, "Save as a preset" keeps the light's look, "Same on every light"
 copies it to the rest.
 
+The **Autopilot** page hands the room to a show director that reads the music once a second (its
+loudness against the song's own quiet and loud parts, its character changes, the beat) and picks
+a whole-rig look from its style's pool: the lamps' movement and colours, the bulb's style, the
+display's visualizer and scheme (and TILES' animation when taken over). **Club** follows the song's
+arc (washes in breakdowns, grooves in the body, strobes at the peak, a switch on each drop, a new
+look about every 32 bars or at a new section), **Lounge** stays slow and gentle (a change every
+minute or two, never a strobe), **Rave** goes maximal (strikes and strobes, a new look every
+8 bars). It lies over the settings and saves nothing; off, everything is as it was.
+
 The **Scenes** page saves the whole room (every light's look and settings, the display's style)
 under a name, called back with one click. Everything lives in
 `~/Library/Application Support/Show Control`.

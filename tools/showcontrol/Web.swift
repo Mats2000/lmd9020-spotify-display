@@ -215,6 +215,7 @@ extension Show {
         return [
             "title": title, "artist": artist, "status": status,
             "lampsOn": lampsOn, "style": styleName, "scheme": schemeName,
+            "autopilot": autopilot?.rawValue ?? "off", "autoLook": autoRecipe?.name ?? "", "autoTier": autoTier.rawValue,
             "styles": ["Shuffle"] + styles + ["Off"], "schemes": schemes,
             "presets": looks.map { ["id": $0.id.uuidString, "name": $0.name] },
             "fixtures": fixtures.map { f in
@@ -235,6 +236,7 @@ extension Show {
         func int(_ k: String, _ r: ClosedRange<Int>) -> Int? { (a[k] as? Int).map { max(r.lowerBound, min(r.upperBound, $0)) } }
         switch a["action"] as? String {
         case "lamps": if let on = a["on"] as? Bool { lampsOn = on }
+        case "autopilot": if let s = a["style"] as? String { autopilot = Autopilot.Style(rawValue: s) }
         case "display":
             if let s = a["style"] as? String, s == "Shuffle" || s == "Off" || styles.contains(s) { styleName = s }
             if let s = a["scheme"] as? String, schemes.contains(s) { schemeName = s }

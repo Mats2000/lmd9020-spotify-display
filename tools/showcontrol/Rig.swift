@@ -19,6 +19,10 @@ final class Rig {
         var ahead = false           // kicks sent ahead, from the pattern
         var hitPercent = 0          // how many guessed kicks came true lately
         var songSteps = 0           // times the song changed character
+        // What the music is doing, for the autopilot: loudness (0-1, smoothed), how bright or
+        // bassy it sounds (0-1, against the song's range), the beat (s, 0 unknown), kicks a second.
+        var energy = 0.0, brightness = 0.5, period = 0.0, kicksPerSecond = 0.0
+        var playing = false
     }
 
     let govee = GoveeLamps()
@@ -395,7 +399,11 @@ final class Rig {
             timingAt = now
             let t = Timing(captureMs: Int(Sync.captureLag * 1000), bufferMs: Int(Sync.bufferLength * 1000),
                            lampMs: Int(lateLamp * 1000), bulbMs: Int(lateBulb * 1000), ahead: sendingAhead,
-                           hitPercent: Int(hits * 100), songSteps: songStep)
+                           hitPercent: Int(hits * 100), songSteps: songStep,
+                           energy: (energy * 100).rounded() / 100, brightness: (brightness * 20).rounded() / 20,
+                           period: (lastPeriod * 100).rounded() / 100,
+                           kicksPerSecond: Double(heardKicks.filter { Sync.now + 0.1 - $0 < 4 }.count) / 4,
+                           playing: r.playing)
             DispatchQueue.main.async { self.onTiming?(t) }
         }
         if wantsFrames {
