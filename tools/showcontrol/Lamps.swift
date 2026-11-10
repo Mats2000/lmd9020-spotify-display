@@ -135,7 +135,16 @@ final class LampEngine {
         }
     }
 
-    private func spawn() {
+    // A snare or hat: detail on top of the kick's pulse.
+    func accent(_ strength: Float) {
+        switch look.movement {
+        case .twinkle: if spots.count < look.spotsHigh + 2 { spawn(short: true) }
+        case .chase, .flow, .gradient: flash = max(flash, 0.2 * Double(strength))
+        default: break
+        }
+    }
+
+    private func spawn(short: Bool = false) {
         let size = Double(Int.random(in: look.sizeLow...max(look.sizeLow, look.sizeHigh))) / 10 * Double(span) * 0.5
         let drift: Double
         switch look.direction {
@@ -143,7 +152,7 @@ final class LampEngine {
         default: drift = 1
         }
         spots.append(Spot(at: Double.random(in: 0..<Double(span)), size: max(0.8, size), colour: takeColour(),
-                          life: (0.5 + Double.random(in: 0...0.8)) / max(0.4, speed), drift: drift))
+                          life: (short ? 0.25 : 0.5 + Double.random(in: 0...0.8)) / max(0.4, speed), drift: drift))
     }
 
     // One frame: dt seconds since the last, energy 0...1 (the music's loudness).
@@ -252,8 +261,9 @@ final class GoveeLamps {
     private let lock = NSLock()
     private var found: [String: Lamp] = [:]
     private var saved: [String: [String: Any]] = [:]
-    private(set) var streaming = false
+    private var live = Set<String>()
     var onFound: (() -> Void)?
+    var onStatus: ((String, [String: Any]) -> Void)?  // a lamp in the show, as it says it is
 
     // Segments a model has (the H6076 floor lamp: 14); others fall back to 10, which every
     // streaming lamp takes.
@@ -287,48 +297,67 @@ final class GoveeLamps {
         send(#"{"msg":{"cmd":"scan","data":{"account_topic":"reserve"}}}"#, to: "239.255.255.250", port: 4001)
     }
 
-    func start() {
-        guard !streaming else { return }
-        streaming = true
-        for ip in lamps.keys {
-            send(#"{"msg":{"cmd":"devStatus","data":{}}}"#, to: ip, port: 4003)
-            send(#"{"msg":{"cmd":"turn","data":{"value":1}}}"#, to: ip, port: 4003)
-            send(#"{"msg":{"cmd":"brightness","data":{"value":100}}}"#, to: ip, port: 4003)
-            razer(on: true, ip)
-        }
-    }
+    func isLive(_ ip: String) -> Bool { lock.lock(); defer { lock.unlock() }; return live.contains(ip) }
 
-    func stop() {
-        guard streaming else { return }
-        streaming = false
+    // Takes a lamp for the show: its own state read first (to put back), then on, full, streaming.
+    func start(_ ip: String) {
         lock.lock()
-        let states = saved
-        saved = [:]
+        let fresh = live.insert(ip).inserted
         lock.unlock()
-        for ip in lamps.keys { razer(on: false, ip) }
-        for (ip, st) in states {
-            if let c = st["color"] as? [String: Any], let r = c["r"] as? Int, let g = c["g"] as? Int, let b = c["b"] as? Int {
-                let k = st["colorTemInKelvin"] as? Int ?? 0
-                send(#"{"msg":{"cmd":"colorwc","data":{"color":{"r":\#(r),"g":\#(g),"b":\#(b)},"colorTemInKelvin":\#(k)}}}"#, to: ip, port: 4003)
-            }
-            if let level = st["brightness"] as? Int { send(#"{"msg":{"cmd":"brightness","data":{"value":\#(level)}}}"#, to: ip, port: 4003) }
-            if st["onOff"] as? Int == 0 { send(#"{"msg":{"cmd":"turn","data":{"value":0}}}"#, to: ip, port: 4003) }
-        }
+        guard fresh else { return }
+        send(#"{"msg":{"cmd":"devStatus","data":{}}}"#, to: ip, port: 4003)
+        send(#"{"msg":{"cmd":"turn","data":{"value":1}}}"#, to: ip, port: 4003)
+        send(#"{"msg":{"cmd":"brightness","data":{"value":100}}}"#, to: ip, port: 4003)
+        razer(on: true, ip)
     }
 
-    // One frame: a colour per segment, to every lamp (spread or cut to its own segment count).
-    func show(_ colours: [RGB]) {
-        guard streaming, !colours.isEmpty else { return }
-        for (ip, lamp) in lamps {
-            let n = lamp.segments
-            var frame: [UInt8] = [0xBB, 0x00, UInt8(2 + 3 * n), 0xB0, 0x01, UInt8(n)]
-            for i in 0..<n {
-                let c = colours[i * colours.count / n]
-                frame += [c.r, c.g, c.b]
-            }
-            frame.append(frame.reduce(0, ^))
-            send(#"{"msg":{"cmd":"razer","data":{"pt":"\#(Data(frame).base64EncodedString())"}}}"#, to: ip, port: 4003)
+    // Gives a lamp back as it was before the show.
+    func stop(_ ip: String) {
+        lock.lock()
+        let was = live.remove(ip) != nil
+        let st = saved.removeValue(forKey: ip)
+        lock.unlock()
+        guard was else { return }
+        razer(on: false, ip)
+        guard let st else { return }
+        if let c = st["color"] as? [String: Any], let r = c["r"] as? Int, let g = c["g"] as? Int, let b = c["b"] as? Int {
+            let k = st["colorTemInKelvin"] as? Int ?? 0
+            send(#"{"msg":{"cmd":"colorwc","data":{"color":{"r":\#(r),"g":\#(g),"b":\#(b)},"colorTemInKelvin":\#(k)}}}"#, to: ip, port: 4003)
         }
+        if let level = st["brightness"] as? Int { send(#"{"msg":{"cmd":"brightness","data":{"value":\#(level)}}}"#, to: ip, port: 4003) }
+        if st["onOff"] as? Int == 0 { send(#"{"msg":{"cmd":"turn","data":{"value":0}}}"#, to: ip, port: 4003) }
+    }
+
+    // Lets go of a lamp someone else (Alexa) took: streaming off, nothing put back.
+    func release(_ ip: String) {
+        lock.lock()
+        let was = live.remove(ip) != nil
+        saved.removeValue(forKey: ip)
+        lock.unlock()
+        if was { razer(on: false, ip) }
+    }
+
+    func stopAll() { for ip in lamps.keys { stop(ip) } }
+
+    // Asks the lamps in the show how they are; replies go to onStatus.
+    func checkStatus() {
+        lock.lock()
+        let ips = live
+        lock.unlock()
+        for ip in ips { send(#"{"msg":{"cmd":"devStatus","data":{}}}"#, to: ip, port: 4003) }
+    }
+
+    // One frame for one lamp: a colour per segment (spread or cut to its own segment count).
+    func show(_ colours: [RGB], to ip: String) {
+        guard !colours.isEmpty, isLive(ip), let lamp = lamps[ip] else { return }
+        let n = lamp.segments
+        var frame: [UInt8] = [0xBB, 0x00, UInt8(2 + 3 * n), 0xB0, 0x01, UInt8(n)]
+        for i in 0..<n {
+            let c = colours[i * colours.count / n]
+            frame += [c.r, c.g, c.b]
+        }
+        frame.append(frame.reduce(0, ^))
+        send(#"{"msg":{"cmd":"razer","data":{"pt":"\#(Data(frame).base64EncodedString())"}}}"#, to: ip, port: 4003)
     }
 
     private func razer(on: Bool, _ ip: String) {
@@ -366,8 +395,10 @@ final class GoveeLamps {
             let sender = String(cString: text)
             if msg["cmd"] as? String == "devStatus" {  // a lamp's own state, to put back later
                 lock.lock()
-                if saved[sender] == nil { saved[sender] = data }
+                let first = live.contains(sender) && saved[sender] == nil
+                if first { saved[sender] = data }
                 lock.unlock()
+                if !first { onStatus?(sender, data) }
                 continue
             }
             guard msg["cmd"] as? String == "scan" else { continue }
@@ -393,6 +424,7 @@ final class MatterLights {
     private let sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
     private(set) var names: [String] = []
     private(set) var running = false
+    var onReleased: ((String) -> Void)?  // someone else (Alexa) took this light
 
     static var helper: URL? {
         // The project's matter/ folder (its node_modules are too big to copy into the app).
@@ -412,12 +444,25 @@ final class MatterLights {
         p.currentDirectoryURL = dir
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
+        p.standardError = out
+        // Its output also goes to ~/Library/Logs/Show Control/matter.log, for when a light won't come.
+        let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Show Control")
+        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let logFile = logs.appendingPathComponent("matter.log")
+        FileManager.default.createFile(atPath: logFile.path, contents: nil)
+        let log = try? FileHandle(forWritingTo: logFile)
         out.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let text = String(decoding: h.availableData, as: UTF8.self)
-            for line in text.split(separator: "\n") where line.hasPrefix("Ready: ") {
-                let name = String(line.dropFirst(7))
-                DispatchQueue.main.async { if !(self?.names.contains(name) ?? true) { self?.names.append(name) } }
+            let data = h.availableData
+            log?.write(data)
+            let text = String(decoding: data, as: UTF8.self)
+            for line in text.split(separator: "\n") {
+                if line.hasPrefix("Ready: ") {
+                    let name = String(line.dropFirst(7))
+                    DispatchQueue.main.async { if !(self?.names.contains(name) ?? true) { self?.names.append(name) } }
+                } else if line.hasPrefix("Released: ") {
+                    let name = String(line.dropFirst(10).split(separator: " ").first ?? "")
+                    DispatchQueue.main.async { self?.onReleased?(name) }
+                }
             }
         }
         p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.running = false } }
@@ -448,8 +493,13 @@ final class MatterLights {
         }
     }
 
-    func colour(_ c: RGB, level: Double, fade: Double) {
-        send(["r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "level": level, "fade": fade])
+    func colour(_ id: String, _ c: RGB, level: Double, fade: Double) {
+        send(["id": id, "r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "level": level, "fade": fade])
     }
-    func kick(level: Double) { send(["level": level, "fade": 0, "kick": true]) }
+    func level(_ id: String, _ level: Double, fade: Double) { send(["id": id, "level": level, "fade": fade]) }
+    func kick(_ id: String, level: Double) { send(["id": id, "level": level, "fade": 0, "kick": true]) }
+    func save(_ id: String) { send(["id": id, "save": true]) }
+    func restore(_ id: String) { send(["id": id, "restore": true]) }
+    func release(_ id: String) { send(["id": id, "release": true]) }
+    func take(_ id: String) { send(["id": id, "take": true]) }
 }

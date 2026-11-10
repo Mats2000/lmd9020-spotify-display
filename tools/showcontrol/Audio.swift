@@ -82,28 +82,167 @@ final class Analyzer {
         send(packet)
     }
 
-    // Kicks: the bass (two poles at ~150 Hz) in 64-sample slices, 1.3 ms at 48 kHz, against its own
-    // recent level. A jump fires at once; then nothing for 120 ms.
-    private var lowA: Float = 0, lowB: Float = 0, slice: Float = 0, sliceAt = 0
-    private var bassLevel: Float = 1e-5, holdSlices = 0
+    // Kicks: the kick drum's own band (30-150 Hz; its attack starts high and drops) in 64-sample
+    // slices (1.3 ms at 48 kHz), averaged over 5 ms. A kick is a sharp rise there (dB over ~10 ms,
+    // not a level, so sustained bass and rumble don't count) near the band's recent peak, and, once
+    // the tempo is found (see tempo()), on the beat, so offbeat bass notes don't count either. Snares
+    // and hats (the top band rising on its own) are accents: detail, never the main pulse.
+    private struct Biquad {
+        var b0: Float = 1, b1: Float = 0, b2: Float = 0, a1: Float = 0, a2: Float = 0
+        var x1: Float = 0, x2: Float = 0, y1: Float = 0, y2: Float = 0
+        init() {}
+        init(low: Bool, hz: Double, rate: Double) {
+            let w = 2 * Double.pi * hz / rate, alpha = sin(w) / (2 * 0.7071), c = cos(w), a0 = 1 + alpha
+            if low {
+                b0 = Float((1 - c) / 2 / a0); b1 = Float((1 - c) / a0); b2 = b0
+            } else {
+                b0 = Float((1 + c) / 2 / a0); b1 = Float(-(1 + c) / a0); b2 = b0
+            }
+            a1 = Float(-2 * c / a0); a2 = Float((1 - alpha) / a0)
+        }
+        mutating func run(_ x: Float) -> Float {
+            let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
+        }
+    }
+    private var kickLow = Biquad(), kickHigh = Biquad(), top = Biquad(), filtersAt = 0.0
+    private var lowSum: Float = 0, topSum: Float = 0, sliceAt = 0
+    private var lowRecent = [Float](repeating: 0, count: 4), topRecent = [Float](repeating: 0, count: 4), recentAt = 0
+    private var lowDb = [Float](repeating: -120, count: 16), topDb = [Float](repeating: -120, count: 16), dbAt = 0
+    private var lowPeak: Float = 1e-6, topPeak: Float = 1e-6
+    private var armed = 0, armedBest: Float = 0, armedEnergy: Float = 0
+    private var sinceKick = 1e9, sinceAccent = 1e9
+    private var kickLevel: Float = 0  // recent kicks' own peak energy
+    private var clock = 0.0, lowMean: Float = 0, candidates: [(at: Double, energy: Float)] = []
+    // The tempo: how strongly the band rose, in 5 ms bins over the last 4 s; twice a second the
+    // period and phase of its strongest repeating rise (the kick) are found from it.
+    private var onsets = [Float](repeating: 0, count: 768), onsetAt = 0, binRise: Float = 0, binSlices = 0, binsSinceTempo = 0
+    private var beatPeriod = 0.0, nextBeat = 0.0, tempoSure = false
+    var onAccent: ((Float) -> Void)?
 
     private func kick(_ s: Float) {
-        let k = Float(1 - exp(-2 * Double.pi * 150 / sampleRate))
-        lowA += k * (s - lowA)
-        lowB += k * (lowA - lowB)
-        slice += lowB * lowB
+        if filtersAt != sampleRate {
+            filtersAt = sampleRate
+            kickLow = Biquad(low: true, hz: 150, rate: sampleRate)
+            kickHigh = Biquad(low: false, hz: 30, rate: sampleRate)
+            top = Biquad(low: false, hz: 2500, rate: sampleRate)
+        }
+        let l = kickHigh.run(kickLow.run(s)), t = top.run(s)
+        lowSum += l * l
+        topSum += t * t
         sliceAt += 1
         guard sliceAt == 64 else { return }
-        let energy = slice / 64
-        slice = 0
-        sliceAt = 0
-        if holdSlices > 0 { holdSlices -= 1 }
-        if holdSlices == 0 && energy > bassLevel * 2.4 && energy > 2e-6 {
-            holdSlices = Int(0.12 * sampleRate / 64)
-            beat = 1
-            onKick?(min(1, energy / (bassLevel * 8)))
+        // Over the last 4 slices (5 ms): a single slice is shorter than one cycle down here, so on
+        // its own it jumps about even in plain noise.
+        lowRecent[recentAt] = lowSum / 64
+        topRecent[recentAt] = topSum / 64
+        recentAt = (recentAt + 1) % 4
+        let lowE = lowRecent.reduce(0, +) / 4, topE = topRecent.reduce(0, +) / 4
+        lowSum = 0; topSum = 0; sliceAt = 0
+        let slice = 64 / sampleRate
+        clock += slice
+        sinceKick += slice
+        sinceAccent += slice
+
+        // Each band's peak, falling back over ~2 s, as the yardstick for "loud enough".
+        lowPeak = max(lowE, lowPeak * Float(exp(-slice / 2)), 1e-9)
+        topPeak = max(topE, topPeak * Float(exp(-slice / 2)), 1e-9)
+        let ld = 10 * log10f(lowE + 1e-12), td = 10 * log10f(topE + 1e-12)
+        // The rise: now against the quietest of 3-12 slices back (4-16 ms).
+        var lowBase: Float = 0, topBase: Float = 0
+        for k in 3...12 {
+            let i = (dbAt - k + 32) % 16
+            lowBase = k == 3 ? lowDb[i] : min(lowBase, lowDb[i])
+            topBase = k == 3 ? topDb[i] : min(topBase, topDb[i])
         }
-        bassLevel += (energy - bassLevel) * 0.006  // ~0.2 s
+        lowDb[dbAt] = ld
+        topDb[dbAt] = td
+        dbAt = (dbAt + 1) % 16
+        let lowRise = ld - lowBase, topRise = td - topBase
+
+        if armed > 0 {  // waiting for the kick's top
+            armedBest = max(armedBest, lowRise)
+            armedEnergy = max(armedEnergy, lowE)
+            armed -= 1
+            guard armed == 0 else { return }
+            // On the beat once the tempo is found (an offbeat bass note isn't a kick), unless far louder
+            // than the kicks; before that, at least half the strongest hit of the last 1.5 s.
+            candidates.removeAll { clock - $0.at > 1.5 }
+            candidates.append((clock, armedEnergy))
+            let strongest = candidates.map(\.energy).max() ?? armedEnergy
+            if tempoSure {
+                var d = (clock - nextBeat).truncatingRemainder(dividingBy: beatPeriod)
+                if d < 0 { d += beatPeriod }
+                let off = min(d, beatPeriod - d)
+                guard off < beatPeriod * 0.15 || armedEnergy > kickLevel * 2 else { return }
+            } else {
+                guard armedEnergy >= strongest * 0.5 else { return }
+            }
+            kickLevel = kickLevel == 0 ? armedEnergy : kickLevel + (armedEnergy - kickLevel) * 0.25
+            sinceKick = 0
+            beat = 1
+            onKick?(min(1, sqrtf(armedEnergy / max(kickLevel, 1e-9)) * 0.8) * min(1, 0.55 + armedBest / 40))
+            return
+        }
+        kickLevel *= Float(exp(-slice / 8))  // forgets slowly, so a quieter section is still heard
+        lowMean += (lowE - lowMean) * Float(slice / 0.4)  // the band's own level, so hiss never counts
+        tempo(max(0, lowRise - 3) * (lowE > lowMean ? 1 : 0.3))
+        let hold = tempoSure ? max(0.11, beatPeriod * 0.3) : 0.11
+        if sinceKick > hold && lowRise > 8 && lowE > lowPeak * 0.15 && lowE > lowMean * 2.5 && lowE > 1e-6 {
+            armed = 2
+            armedBest = lowRise
+            armedEnergy = lowE
+        } else if sinceAccent > 0.07 && sinceKick > 0.03 && topRise > 9 && topE > topPeak * 0.2 && topE > 1e-8 {
+            sinceAccent = 0
+            onAccent?(min(1, sqrtf(topE / topPeak)))
+        }
+    }
+
+    private func tempo(_ rise: Float) {
+        binRise = max(binRise, rise)
+        binSlices += 1
+        guard binSlices == 4 else { return }
+        onsets[onsetAt] = binRise
+        onsetAt = (onsetAt + 1) % onsets.count
+        binRise = 0
+        binSlices = 0
+        binsSinceTempo += 1
+        guard binsSinceTempo >= 96 else { return }
+        binsSinceTempo = 0
+        let bin = 256 / sampleRate, n = onsets.count
+        let o = (0..<n).map { onsets[(onsetAt + $0) % n] }  // oldest first
+        let energy = o.reduce(0) { $0 + $1 * $1 }
+        guard energy > 0 else { tempoSure = false; return }
+        // Period: the autocorrelation's best lag between 60 and 190 BPM, leaning toward ~120.
+        var best = 0, bestScore: Float = 0
+        for lag in Int(0.315 / bin)...Int(1.0 / bin) {
+            var sum: Float = 0
+            for i in lag..<n { sum += o[i] * o[i - lag] }
+            let lean = Float(exp(-pow(log2(Double(lag) * bin / 0.5), 2) / 2))
+            if sum * lean > bestScore { bestScore = sum * lean; best = lag }
+        }
+        guard best > 0 else { tempoSure = false; return }
+        var peak: Float = 0, at = best
+        for lag in max(1, best - 1)...(best + 1) {  // a finer look either side
+            var sum: Float = 0
+            for i in lag..<n { sum += o[i] * o[i - lag] }
+            if sum > peak { peak = sum; at = lag }
+        }
+        tempoSure = peak > energy * 0.25
+        // Phase: where along the period the rises stack up most.
+        var phase = 0, phaseScore: Float = -1
+        for p in 0..<at {
+            var sum: Float = 0
+            var i = n - 1 - p
+            while i >= 1 {
+                sum += max(o[i], o[i - 1], i + 1 < n ? o[i + 1] : 0)
+                i -= at
+            }
+            if sum > phaseScore { phaseScore = sum; phase = p }
+        }
+        beatPeriod = Double(at) * bin
+        nextBeat = clock - Double(phase) * bin
     }
 
     func push(_ samples: [Float], rate: Double) {

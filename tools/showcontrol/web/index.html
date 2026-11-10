@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#171d3a">
+<link rel="apple-touch-icon" href="/icon.png">
+<title>Show Control</title>
+<style>
+@font-face { font-family: "Exo 2"; font-weight: 600; src: url(/fonts/Exo2.0-SemiBold.otf); }
+@font-face { font-family: "Sora"; font-weight: 400; src: url(/fonts/Sora-Regular.ttf); }
+@font-face { font-family: "Sora"; font-weight: 300; src: url(/fonts/Sora-Light.ttf); }
+:root {
+  --ink: #171d3a; --panel: #1c2345; --line: rgba(201, 207, 238, .16);
+  --text: #e6e9f6; --ink2: #9ca3c6; --peri: #94abf9;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--ink); color: var(--text); font: 300 15px/1.4 Sora, sans-serif; }
+body { padding: env(safe-area-inset-top) 16px calc(84px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+h1 { font: 600 28px "Exo 2", sans-serif; margin: 28px 0 4px; }
+h2 { font: 400 11px Sora, sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--ink2); margin: 30px 0 12px; }
+.sub { color: var(--ink2); font-size: 13px; margin: 0 0 8px; }
+.card { border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+.card.held { opacity: .75; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row .grow { flex: 1; min-width: 0; }
+.name { font: 400 15px Sora, sans-serif; }
+.kind { color: var(--ink2); font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: 400 13px Sora, sans-serif; color: var(--ink2); background: none; border: 1.2px solid var(--line);
+  border-radius: 999px; padding: 0 15px; height: 36px; }
+.chip.on { color: var(--text); background: var(--panel); border-color: var(--peri); }
+.list button { display: flex; width: 100%; justify-content: space-between; align-items: center; font: 400 14px Sora, sans-serif;
+  color: var(--ink2); background: none; border: 0; border-radius: 12px; height: 42px; padding: 0 12px; text-align: left; }
+.list button.on { color: var(--text); background: var(--panel); }
+.switch { width: 46px; height: 28px; border-radius: 99px; border: 1.2px solid var(--line); background: none; position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 7px; left: 7px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink2); transition: left .15s; }
+.switch.on { border-color: var(--peri); background: var(--panel); }
+.switch.on::after { left: 25px; background: var(--peri); }
+.strip { display: flex; gap: 3px; height: 14px; margin: 12px 0; }
+.strip i { flex: 1; border-radius: 3px; background: #000; }
+label.slider { display: block; margin: 16px 0 4px; }
+label.slider span { display: flex; justify-content: space-between; color: var(--ink2); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+label.slider b { font-weight: 400; color: var(--text); letter-spacing: 0; font-size: 13px; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 32px; background: none; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 2px; background: var(--line); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -10px; border-radius: 50%;
+  background: var(--ink); border: 1.6px solid var(--peri); }
+select, input[type=text] { font: 400 14px Sora, sans-serif; color: var(--text); background: var(--ink); border: 1px solid var(--line);
+  border-radius: 12px; height: 40px; padding: 0 12px; width: 100%; }
+.swatches { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 14px 0; }
+.sw { position: relative; width: 40px; height: 40px; }
+.sw input { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 50%; padding: 0; background: none; -webkit-appearance: none; appearance: none; }
+.sw input::-webkit-color-swatch-wrapper { padding: 0; }
+.sw input::-webkit-color-swatch { border: 0; border-radius: 50%; }
+.sw .x { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--ink); color: var(--ink2); font-size: 12px; line-height: 17px; text-align: center; padding: 0; }
+.add { width: 40px; height: 40px; border-radius: 50%; border: 1px dashed var(--line); background: none; color: var(--ink2); font-size: 20px; }
+.btn { font: 400 13px Sora, sans-serif; color: var(--text); background: none; border: 1.2px solid var(--line); border-radius: 999px; height: 38px; padding: 0 16px; }
+.btn.small { height: 32px; font-size: 12px; padding: 0 12px; }
+.held-note { color: var(--ink2); font-size: 12px; }
+nav { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; gap: 6px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--ink); border-top: 1px solid var(--line); }
+nav button { flex: 1; max-width: 170px; height: 44px; font: 400 14px Sora, sans-serif; color: var(--ink2); background: none; border: 0; border-radius: 12px; }
+nav button.on { color: var(--text); background: var(--panel); }
+.gate { margin-top: 30vh; text-align: center; }
+.gate input { text-align: center; font-size: 22px; letter-spacing: .3em; max-width: 220px; margin: 16px auto; display: block; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<nav id="nav" hidden>
+  <button data-tab="venue">Venue</button><button data-tab="looks">Looks</button><button data-tab="display">Display</button>
+</nav>
+<script>
+"use strict";
+let code = "";
+try { code = localStorage.getItem("showCode") || ""; } catch (e) {}
+let tab = "venue";
+try { tab = localStorage.getItem("showTab") || "venue"; } catch (e) {}
+let state = null, shape = "", busyUntil = 0;
+const app = document.getElementById("app"), nav = document.getElementById("nav");
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const SOURCE = { own: "These colours", cover: "Cover", scheme: "Display colours" };
+
+async function call(path, body) {
+  const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "X-Show-Code": code, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401) { gate(true); return null; }
+  return r.json();
+}
+async function act(body) { busyUntil = Date.now() + 600; const s = await call("/api/do", body); if (s) show(s); }
+async function poll() {
+  if (document.visibilityState === "visible" && code) {
+    try { const s = await call("/api/state"); if (s && Date.now() > busyUntil) show(s); } catch (e) {}
+  }
+  setTimeout(poll, 700);
+}
+
+function gate(wrong) {
+  nav.hidden = true; shape = "";
+  app.innerHTML = `<div class="gate"><h1>Show Control</h1><p class="sub">${wrong && code ? "That code didn't work. " : ""}Enter the code from the Venue page on the Mac.</p>
+    <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>`;
+  const i = document.getElementById("code");
+  i.focus();
+  i.oninput = () => { if (i.value.length === 6) { code = i.value; try { localStorage.setItem("showCode", code); } catch (e) {} start(); } };
+}
+async function start() { const s = await call("/api/state"); if (s) { nav.hidden = false; show(s); } }
+
+const strip = cs => `<div class="strip">${(cs.length ? cs : ["#000000"]).slice().map(c => `<i style="background:${c}"></i>`).join("")}</div>`;
+const sw = (on, a) => `<button class="switch${on ? " on" : ""}" data-act='${esc(JSON.stringify(a))}'></button>`;
+const chip = (label, on, a) => `<button class="chip${on ? " on" : ""}" data-act='${esc(JSON.stringify(a))}'>${esc(label)}</button>`;
+const slider = (label, key, v, min, max, unit, a) =>
+  `<label class="slider"><span>${label}<b>${v}${unit}</b></span><input type="range" min="${min}" max="${max}" value="${v}" data-key="${key}" data-base='${esc(JSON.stringify(a))}'></label>`;
+
+function show(s) {
+  state = s;
+  const look = s.looks.find(l => l.id === s.lookID) || s.looks[0];
+  const key = [tab, s.fixtures.map(f => f.id + f.held + f.on + f.lookID).join(), s.looks.map(l => l.id + l.name).join(), s.scenes.map(x => x.id).join(),
+    s.lookID, look.colours.join(), look.source, look.movement, look.direction, look.random, s.style, s.scheme, s.lampsOn].join("|");
+  for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === tab);
+  if (key !== shape) { shape = key; render(s, look); return; }
+  // Same layout: only the live parts and values not being touched.
+  for (const [i, f] of s.fixtures.entries()) {
+    const el = document.querySelector(`[data-live="${i}"]`);
+    if (el) el.outerHTML = strip(f.colours).replace('class="strip"', `class="strip" data-live="${i}"`);
+  }
+  const p = document.querySelector("[data-preview]");
+  if (p) p.outerHTML = strip(s.preview).replace('class="strip"', 'class="strip" data-preview');
+  const np = document.querySelector("[data-np]");
+  if (np) np.textContent = s.title ? `${s.title} · ${s.artist}` : s.status;
+}
+
+function render(s, look) {
+  const np = `<p class="sub" data-np>${esc(s.title ? `${s.title} · ${s.artist}` : s.status)}</p>`;
+  if (tab === "venue") {
+    let h = `<h1>Venue</h1>${np}<div class="row" style="margin-top:18px"><span class="grow">Lamps follow the music</span>${sw(s.lampsOn, { action: "lamps", on: !s.lampsOn })}</div><h2>Lights</h2>`;
+    if (!s.fixtures.length) h += `<p class="sub">Looking for lights…</p>`;
+    s.fixtures.forEach((f, i) => {
+      const opts = `<option value="">The open look (${esc(look.name)})</option>` + s.looks.map(l => `<option value="${l.id}"${l.id === f.lookID ? " selected" : ""}>${esc(l.name)}</option>`).join("");
+      h += `<div class="card${f.held ? " held" : ""}"><div class="row"><div class="grow"><div class="name">${esc(f.name)}</div>
+        <div class="kind">${f.kind === "govee" ? `Govee · ${f.segments} segments` : "Matter light"}</div></div>${f.held ? "" : sw(f.on, { action: "fixture", id: f.id, on: !f.on })}</div>`;
+      if (f.held) {
+        h += `<div class="row" style="margin-top:12px"><span class="grow held-note">Alexa has it. The show leaves it alone.</span><button class="btn small" data-act='${esc(JSON.stringify({ action: "take", id: f.id }))}'>Take back</button></div></div>`;
+        return;
+      }
+      h += strip(f.colours).replace('class="strip"', `class="strip" data-live="${i}"`);
+      h += `<select data-fixture="${esc(f.id)}">${opts}</select>`;
+      h += slider("Brightness", "brightness", f.brightness, 0, 100, "%", { action: "fixture", id: f.id });
+      h += `<div class="row" style="margin-top:10px"><span class="grow"></span><button class="btn small" data-act='${esc(JSON.stringify({ action: "hold", id: f.id }))}'>Hand to Alexa</button></div></div>`;
+    });
+    h += `<h2>Scenes</h2><div class="list">`;
+    for (const sc of s.scenes) h += `<div class="row"><button class="grow" data-act='${esc(JSON.stringify({ action: "sceneRecall", id: sc.id }))}'>${esc(sc.name)}</button>
+      <button class="btn small" style="width:auto" data-act='${esc(JSON.stringify({ action: "sceneDelete", id: sc.id }))}'>Delete</button></div>`;
+    h += `</div><div class="row" style="margin-top:12px"><input type="text" id="sceneName" placeholder="Scene name" class="grow"><button class="btn" id="sceneSave">Save scene</button></div>`;
+    app.innerHTML = h;
+  } else if (tab === "looks") {
+    const base = { action: "look", id: look.id };
+    let h = `<h1>Looks</h1>${np}<h2>Looks</h2><div class="chips">${s.looks.map(l => chip(l.name, l.id === look.id, { action: "open", id: l.id })).join("")}</div>`;
+    h += strip(s.preview).replace('class="strip"', 'class="strip" data-preview');
+    h += `<input type="text" id="lookName" value="${esc(look.name)}">`;
+    h += `<h2>Movement</h2><div class="chips">${s.movements.map(m => chip(cap(m), m === look.movement, { ...base, movement: m })).join("")}</div>`;
+    h += `<h2>Colours</h2><div class="chips">${s.sources.map(m => chip(SOURCE[m], m === look.source, { ...base, source: m })).join("")}</div>`;
+    if (look.source === "own") {
+      h += `<div class="swatches">${look.colours.map((c, i) => `<div class="sw"><input type="color" value="${c}" data-colour="${i}">${look.colours.length > 1 ? `<button class="x" data-remove="${i}">×</button>` : ""}</div>`).join("")}
+        ${look.colours.length < 6 ? `<button class="add" id="addColour">+</button>` : ""}</div>`;
+    }
+    h += `<div class="chips" style="margin-top:12px">${chip("In order", !look.random, { ...base, random: false })}${chip("Random", look.random, { ...base, random: true })}</div>`;
+    h += slider("Spots from", "spotsLow", look.spotsLow, 1, 8, "", base) + slider("Spots to", "spotsHigh", look.spotsHigh, 1, 8, "", base);
+    h += slider("Size from", "sizeLow", look.sizeLow, 1, 10, "", base) + slider("Size to", "sizeHigh", look.sizeHigh, 1, 10, "", base);
+    h += slider("Speed", "speed", look.speed, 1, 5, "", base);
+    h += slider("Rhythm quiet", "rhythmLow", look.rhythmLow, 0, 100, "%", base) + slider("Rhythm on the beat", "rhythmHigh", look.rhythmHigh, 0, 100, "%", base);
+    h += `<h2>Direction</h2><div class="chips">${s.directions.map(d => chip(cap(d), d === look.direction, { ...base, direction: d })).join("")}</div>`;
+    h += `<div class="chips" style="margin-top:26px">${chip("Save as new", false, { action: "lookNew" })}${chip("Use on all lights", false, { action: "useOnAll" })}${s.looks.length > 1 ? chip("Delete", false, { action: "lookDelete", id: look.id }) : ""}</div>`;
+    app.innerHTML = h;
+  } else {
+    let h = `<h1>Display</h1>${np}<h2>Visualizer</h2><div class="list">${s.styles.map(x => `<button class="${x === s.style ? "on" : ""}" data-act='${esc(JSON.stringify({ action: "display", style: x }))}'>${esc(x)}</button>`).join("")}</div>`;
+    h += `<h2>Colours</h2><div class="list">${s.schemes.map(x => `<button class="${x === s.scheme ? "on" : ""}" data-act='${esc(JSON.stringify({ action: "display", scheme: x }))}'>${esc(x)}</button>`).join("")}</div>`;
+    app.innerHTML = h;
+  }
+}
+
+app.addEventListener("click", e => {
+  const b = e.target.closest("[data-act]");
+  if (b) return act(JSON.parse(b.dataset.act));
+  const look = state && (state.looks.find(l => l.id === state.lookID) || state.looks[0]);
+  if (e.target.id === "addColour") return act({ action: "look", id: look.id, colours: [...look.colours, look.colours[look.colours.length - 1] || "#ffffff"] });
+  if (e.target.dataset.remove !== undefined) {
+    const cs = look.colours.filter((_, i) => i !== +e.target.dataset.remove);
+    return act({ action: "look", id: look.id, colours: cs });
+  }
+  if (e.target.id === "sceneSave") return act({ action: "sceneSave", name: document.getElementById("sceneName").value });
+});
+app.addEventListener("input", e => {
+  const t = e.target;
+  if (t.dataset.key) {
+    t.previousElementSibling.querySelector("b").textContent = t.value + (t.max === "100" ? "%" : "");
+    busyUntil = Date.now() + 800;
+  }
+});
+app.addEventListener("change", e => {
+  const t = e.target, look = state && (state.looks.find(l => l.id === state.lookID) || state.looks[0]);
+  if (t.dataset.key) return act({ ...JSON.parse(t.dataset.base), [t.dataset.key]: +t.value });
+  if (t.dataset.fixture) return act({ action: "fixture", id: t.dataset.fixture, lookID: t.value });
+  if (t.dataset.colour !== undefined) {
+    const cs = look.colours.slice(); cs[+t.dataset.colour] = t.value;
+    return act({ action: "look", id: look.id, colours: cs });
+  }
+  if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: look.id, name: t.value.trim() });
+});
+nav.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  tab = b.dataset.tab;
+  try { localStorage.setItem("showTab", tab); } catch (e) {}
+  shape = "";
+  if (state) show(state);
+  window.scrollTo(0, 0);
+});
+if (code) start(); else gate(false);
+poll();
+</script>
+</body>
+</html>

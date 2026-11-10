@@ -1,4 +1,4 @@
-// The window: a sidebar of pages (Display, Lamps, then Venue and TILES), each a calm Sentia page.
+// The window: a sidebar of pages (Display, Looks, Venue, then TILES), each a calm Sentia page.
 
 import SwiftUI
 
@@ -11,8 +11,8 @@ struct RootView: View {
             Group {
                 switch show.page {
                 case .display: DisplayPage(show: show)
-                case .lamps: LampsPage(show: show)
-                case .venue: SoonPage(title: "Venue", text: "Every fixture in the room on one plan, and scenes that move between them.")
+                case .looks: LooksPage(show: show)
+                case .venue: VenuePage(show: show)
                 case .tiles: SoonPage(title: "TILES", text: "Pads that call up looks, and TILES' own lights as part of the show.")
                 }
             }
@@ -33,7 +33,7 @@ struct Sidebar: View {
             }
             .padding(.top, 44).padding(.bottom, 32)
             ForEach(Show.Page.allCases, id: \.self) { p in
-                let soon = p == .venue || p == .tiles
+                let soon = p == .tiles
                 ListRow(title: p.rawValue, chosen: show.page == p, trailing: {
                     if soon { Text("soon").font(.sora(10.5)).foregroundColor(Sentia.ink2.opacity(0.7)) }
                 }) { show.page = p }
@@ -137,9 +137,9 @@ struct SchemeDots: View {
     }
 }
 
-// MARK: - Lamps
+// MARK: - Looks
 
-struct LampsPage: View {
+struct LooksPage: View {
     @ObservedObject var show: Show
 
     private func bind<T>(_ kp: WritableKeyPath<LampLook, T>) -> Binding<T> {
@@ -158,13 +158,9 @@ struct LampsPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .lastTextBaseline) {
-                    PageHeader(title: "Lamps")
-                    Spacer()
-                    SentiaToggle(title: show.lampsOn ? "Lamps follow the music" : "Lamps off", on: $show.lampsOn)
-                }
+                PageHeader(title: "Looks")
                 HStack(alignment: .top, spacing: 40) {
-                    LampDrawing(segments: show.segments)
+                    LampDrawing(segments: show.previewSegments)
                     controls.frame(maxWidth: 520)
                     looksColumn.frame(width: 230)
                 }
@@ -229,25 +225,124 @@ struct LampsPage: View {
                 Chip(title: "Save as new", chosen: false) { show.saveAsNew() }
                 Chip(title: "Delete", chosen: false) { show.deleteLook() }
             }.padding(.top, 8)
+            Chip(title: "Use on all lights", chosen: false) { show.useOnAll() }.padding(.top, 8)
 
-            SectionLabel(text: "Fixtures").padding(.top, 32).padding(.bottom, 6)
-            if show.lampNames.isEmpty && show.matterNames.isEmpty {
-                Text("Looking for lamps…").font(.soraLight(12)).foregroundColor(Sentia.ink2)
-            }
-            ForEach(show.lampNames, id: \.self) { n in Fixture(name: "Govee \(n)", kind: n == "H6076" ? "14 segments" : "segments") }
-            ForEach(show.matterNames, id: \.self) { n in Fixture(name: n, kind: "Matter light") }
         }
     }
 }
 
-struct Fixture: View {
-    let name: String, kind: String
+// MARK: - Venue
+
+// Every light with its own switch, look and brightness; scenes; and the phone page.
+struct VenuePage: View {
+    @ObservedObject var show: Show
+    @State private var sceneName = ""
+
     var body: some View {
-        HStack {
-            Text(name).font(.sora(12.5))
-            Spacer()
-            Text(kind).font(.soraLight(11)).foregroundColor(Sentia.ink2)
-        }.frame(height: 28)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .lastTextBaseline) {
+                    PageHeader(title: "Venue")
+                    Spacer()
+                    SentiaToggle(title: show.lampsOn ? "Lamps follow the music" : "Lamps off", on: $show.lampsOn)
+                }
+                HStack(alignment: .top, spacing: 40) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionLabel(text: "Lights").padding(.bottom, 4)
+                        if show.fixtures.isEmpty {
+                            Text("Looking for lights…").font(.soraLight(12)).foregroundColor(Sentia.ink2)
+                        }
+                        ForEach(show.fixtures) { f in FixtureCard(show: show, fixture: f) }
+                    }
+                    .frame(maxWidth: 560)
+                    VStack(alignment: .leading, spacing: 4) {
+                        SectionLabel(text: "Scenes").padding(.bottom, 6)
+                        ForEach(show.scenes) { sc in
+                            ListRow(title: sc.name, chosen: false, trailing: {
+                                Button { show.deleteScene(sc.id) } label: {
+                                    Image(systemName: "xmark").font(.system(size: 10, weight: .light)).foregroundColor(Sentia.ink2)
+                                }.buttonStyle(.plain)
+                            }) { show.recall(sc.id) }
+                        }
+                        TextField("Scene name", text: $sceneName)
+                            .textFieldStyle(.plain).font(.sora(13))
+                            .padding(.horizontal, 10).frame(height: 32)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Sentia.line, lineWidth: 1))
+                            .padding(.top, 14)
+                        Chip(title: "Save this as a scene", chosen: false) {
+                            show.saveScene(sceneName)
+                            sceneName = ""
+                        }.padding(.top, 8)
+
+                        SectionLabel(text: "On your phone").padding(.top, 36).padding(.bottom, 8)
+                        Text(show.webAddress ?? "Not on a network").font(.sora(13)).textSelection(.enabled)
+                        Text("Code \(show.webCode)").font(.sora(13)).foregroundColor(Sentia.ink2).padding(.top, 2)
+                        Text("Open it in Safari on the home Wi-Fi, then Share → Add to Home Screen.")
+                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 6)
+                    }
+                    .frame(width: 260)
+                }
+                .padding(.bottom, 40)
+            }
+            .padding(.horizontal, 40)
+        }
+    }
+}
+
+struct FixtureCard: View {
+    @ObservedObject var show: Show
+    let fixture: Fixture
+
+    private var brightness: Binding<Int> {
+        Binding(get: { fixture.settings.brightness }, set: { v in show.update(fixture.id) { $0.settings.brightness = v } })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fixture.name).font(.sora(14))
+                    Text(fixture.kind == .govee ? "Govee · \(fixture.segments) segments · \(fixture.address)" : "Matter light")
+                        .font(.soraLight(11)).foregroundColor(Sentia.ink2)
+                }
+                Spacer()
+                if !fixture.held {
+                    SentiaToggle(title: "", on: Binding(get: { fixture.settings.on }, set: { v in show.update(fixture.id) { $0.settings.on = v } }))
+                }
+            }
+            if fixture.held {
+                HStack {
+                    Text("Alexa has it. The show leaves it alone.").font(.soraLight(12)).foregroundColor(Sentia.ink2)
+                    Spacer()
+                    Chip(title: "Take back", chosen: false) { show.takeBack(fixture.id) }
+                }
+            } else {
+                HStack(spacing: 3) {
+                    ForEach(Array((show.live[fixture.id] ?? [.black]).enumerated()), id: \.offset) { _, c in
+                        RoundedRectangle(cornerRadius: 3).fill(c.color).frame(height: 14)
+                    }
+                }
+                HStack(spacing: 16) {
+                    Menu {
+                        Button("The open look (\(show.look.name))") { show.update(fixture.id) { $0.settings.lookID = nil } }
+                        Divider()
+                        ForEach(show.looks) { l in Button(l.name) { show.update(fixture.id) { $0.settings.lookID = l.id } } }
+                    } label: {
+                        Text(show.looks.first { $0.id == fixture.settings.lookID }?.name ?? "The open look")
+                            .font(.sora(12.5)).foregroundColor(Sentia.inkLight)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .padding(.horizontal, 14).frame(height: 32)
+                    .overlay(Capsule().stroke(Sentia.line, lineWidth: 1.2))
+                    Spacer()
+                    Chip(title: "Hand to Alexa", chosen: false) { show.hold(fixture.id) }
+                }
+                SentiaSlider(label: "Brightness", low: .constant(0), high: brightness, bounds: 0...100, range: false, unit: "%")
+            }
+        }
+        .padding(16)
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Sentia.line, lineWidth: 1))
+        .opacity(fixture.held ? 0.75 : 1)
     }
 }
 
@@ -268,9 +363,10 @@ struct LampDrawing: View {
     }
 }
 
-// The look's own colours: click one to change it, right-click to remove, + to add (up to six).
+// The look's own colours: click one to change it, its x (on hover) to remove it, + to add (up to six).
 struct Swatches: View {
     @Binding var colours: [RGB]
+    @State private var hovered: Int?
     var body: some View {
         HStack(spacing: 10) {
             ForEach(colours.indices, id: \.self) { i in
@@ -280,6 +376,15 @@ struct Swatches: View {
                     ColorPicker("", selection: Binding(get: { colours[i].color }, set: { colours[i] = RGB($0) }), supportsOpacity: false)
                         .labelsHidden().frame(width: 26, height: 26).opacity(0.02)
                 }
+                .overlay(alignment: .topTrailing) {
+                    if colours.count > 1 && hovered == i {
+                        Button { colours.remove(at: i) } label: {
+                            Image(systemName: "xmark").font(.system(size: 7, weight: .semibold)).foregroundColor(Sentia.ink2)
+                                .frame(width: 14, height: 14).background(Circle().fill(Sentia.ink)).overlay(Circle().stroke(Sentia.line, lineWidth: 1))
+                        }.buttonStyle(.plain).offset(x: 5, y: -5)
+                    }
+                }
+                .onHover { hovered = $0 ? i : (hovered == i ? nil : hovered) }
                 .contextMenu { if colours.count > 1 { Button("Remove") { colours.remove(at: i) } } }
             }
             if colours.count < 6 {
