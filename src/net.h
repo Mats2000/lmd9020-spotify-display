@@ -12,3 +12,6 @@ void netSnapshot(NowPlaying& out);
 // answered (playing or not).
 uint32_t netSinceBeat();
 uint32_t netSinceSpotify();
+
+// While an update comes in over Wi-Fi: no Spotify requests (they'd compete for RAM and air).
+void netPause(bool paused);

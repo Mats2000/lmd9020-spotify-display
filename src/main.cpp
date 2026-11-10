@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <ESP_8_BIT_composite.h>
+#include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -10,6 +11,9 @@
 #include <time.h>
 
 #include "config.h"
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
 #include "net.h"
 #include "render/scene.h"
 
@@ -52,7 +56,11 @@ static void restartFor(uint32_t why) {
     esp_restart();
 }
 
+static volatile bool updating = false;  // an update is coming in over Wi-Fi (it blocks the loop)
+static volatile uint32_t updateSince = 0;
+
 static void checkLoop(void*) {
+    if (updating && millis() - updateSince < 300000) return;  // give an update five minutes
     if (millis() - loopBeat >= LOOP_STALL_MS) restartFor(stage);
     if (netSinceBeat() >= NET_STALL_MS) restartFor(NET_STUCK);
     if (netSinceSpotify() >= NET_SILENT_MS) restartFor(NET_SILENT);
@@ -206,9 +214,40 @@ static bool handleSleep() {
     return signalOff;
 }
 
+// Updates over Wi-Fi (tools/ota.sh): on once Wi-Fi is up, if secrets.h has an OTA_PASSWORD.
+// No mDNS (it would keep RAM busy); the script finds the board by its broadcast instead.
+static void handleUpdates() {
+#ifdef OTA_PASSWORD
+    static bool started = false;
+    if (strncmp(OTA_PASSWORD, "PASTE", 5) == 0) return;
+    if (!started) {
+        if (WiFi.status() != WL_CONNECTED) return;
+        ArduinoOTA.setHostname("lmd9020-spotify");
+        ArduinoOTA.setPassword(OTA_PASSWORD);
+        ArduinoOTA.setMdnsEnabled(false);
+        ArduinoOTA.onStart([] {
+            updating = true;
+            updateSince = millis();
+            netPause(true);
+            Serial.println("Update over Wi-Fi: receiving");
+        });
+        ArduinoOTA.onEnd([] { Serial.println("Update over Wi-Fi: done, restarting"); });
+        ArduinoOTA.onError([](ota_error_t e) {
+            Serial.printf("Update over Wi-Fi failed (%d)\n", (int)e);
+            netPause(false);
+            updating = false;
+        });
+        ArduinoOTA.begin();
+        started = true;
+    }
+    ArduinoOTA.handle();
+#endif
+}
+
 void loop() {
     loopBeat = millis();
     stage = STAGE_LOOP;
+    handleUpdates();
     netSnapshot(np);
     pollButton();
     if (handleSleep()) {

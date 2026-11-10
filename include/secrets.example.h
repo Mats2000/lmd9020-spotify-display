@@ -11,3 +11,6 @@
 #define SPOTIFY_CLIENT_SECRET "PASTE_CLIENT_SECRET"
 // From tools/spotify_auth.py
 #define SPOTIFY_REFRESH_TOKEN "PASTE_REFRESH_TOKEN"
+
+// Any password: updates over Wi-Fi (tools/ota.sh) need it. Leave as is to turn them off.
+#define OTA_PASSWORD "PASTE a password"

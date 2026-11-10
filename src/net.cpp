@@ -91,6 +91,7 @@ bool loadTrack(const Track& t) {
 bool placeholder(const char* s) { return strncmp(s, "PASTE", 5) == 0 || !s[0]; }
 
 volatile uint32_t beatMs, spotifyMs;  // see netSinceBeat(), netSinceSpotify()
+volatile bool paused = false;          // see netPause()
 
 void netTask(void*) {
     beatMs = spotifyMs = millis();
@@ -126,6 +127,11 @@ void netTask(void*) {
 
     for (;;) {
         beatMs = millis();
+        if (paused) {
+            spotifyMs = millis();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         if (WiFi.status() != WL_CONNECTED) {
             setStatus("Connecting to Wi-Fi “%s”…", WIFI_SSID);
             setPlaying(false, true);
@@ -274,6 +280,7 @@ void netStart(const Scene* s) {
 #endif
 }
 
+void netPause(bool p) { paused = p; }
 uint32_t netSinceBeat() { return millis() - beatMs; }
 uint32_t netSinceSpotify() { return millis() - spotifyMs; }
 

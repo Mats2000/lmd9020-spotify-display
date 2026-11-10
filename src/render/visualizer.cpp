@@ -183,11 +183,11 @@ void stroke(Area& a, int ax, int ay, int bx, int by, int s) {  // a dab every 2 
 }
 
 void noteBeat(const VizInput& in, uint32_t ms, VizState& s) {
-    if (in.beat > 0.9f && !s.beatHeld) {
+    if (in.beat > 0.6f && !s.beatHeld) {  // 0.6: frames sample the beat after its peak has started to fall
         s.beats[s.nextBeat++ % 6] = ms | 1;
         s.beatHeld = true;
     }
-    if (in.beat < 0.5f) s.beatHeld = false;
+    if (in.beat < 0.35f) s.beatHeld = false;
 }
 
 // ---- The styles ----
@@ -485,53 +485,92 @@ void laser(Area& a, int ax, int ay, int bx, int by, int level) {
     }
 }
 
-// A rave: laser fans sweeping up from the bottom corners, snapping to a new pattern on every
-// beat; on each kick a ring of light leaves the cover, and the picture streaks outward behind
-// everything; louder music means more beams and faster sweeps, and the strongest kicks flash.
+// x - floor(x) without floorf.
+inline float fract(float x) {
+    x -= (float)(int)x;
+    return x < 0 ? x + 1.0f : x;
+}
+
+// A techno rave: a warehouse rig locked to the kick. Every bar (four beats) it cuts to the next
+// look: a laser tunnel turning out from behind the cover, laser sheets scanning up and down on
+// the beat, an LED wall chasing in sixteenths, then fans from the floor corners. Through all of
+// them a hard strobe on each kick, a ring of light leaving the cover, and haze streaking out.
 void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     noteBeat(in, ms, s);
     const float e = smoothEnergy(in, dt, s);
-    s.phase += dt * (0.8f + 2.5f * e);
+    s.phase += dt * (0.6f + 1.8f * e);
     if (s.phase > 6283.0f) s.phase -= 6283.0f;
-    const float push = 1 - dt * (0.7f + 1.6f * e);  // sources nearer the middle: everything rushes out
+    const float push = 1 - dt * (0.8f + 1.4f * e);  // sources nearer the middle: everything rushes out
     for (int j = 0; j <= MESH; j++)
         for (int i = 0; i <= MESH; i++) {
             flowMesh.x[j][i] = (int32_t)((a.cx + (i * (Canvas::W / MESH) - a.cx) * push) * 65536);
             flowMesh.y[j][i] = (int32_t)((a.cy + (j * (Canvas::H / MESH) - a.cy) * push) * 65536);
         }
-    feedback(a, s.fed, flowMesh, keepFor(dt, 7.0f - 3.0f * e), 1);
+    feedback(a, s.fed, flowMesh, keepFor(dt, 9.0f - 4.0f * e), 1);
 
-    const uint32_t last = s.nextBeat ? s.beats[(s.nextBeat - 1) % 6] : 0;
+    // Where we are in the beat: the last kick, and the beat's length from the last two.
+    const int n = s.nextBeat;
+    const uint32_t last = n ? s.beats[(n - 1) % 6] : 0, prev = n > 1 ? s.beats[(n - 2) % 6] : 0;
+    uint32_t period = last && prev ? last - prev : 500;
+    if (period < 280 || period > 900) period = 500;
     const uint32_t since = last ? ms - last : 100000;
-    if (since < 140 && e > 0.4f) {  // a flash on the kick, gone in a few frames
-        const int flash = (int)(60 * (1 - since / 140.0f) * e);
+    const float beatPhase = since < period ? (float)since / period : 1;  // 0..1 through this beat
+    const int look = (n / 4) % 4, beatInBar = n % 4;
+    const int hi = TOP, lit = 150 + (int)(70 * e);
+
+    if (since < 70) {  // the strobe: hard and short, everything off the cover
+        const int flash = (int)((70 + 120 * e) * (1 - since / 70.0f));
         offCover(a, [&](int x, int, uint8_t* out) {
             if (out[x] < flash) out[x] = (uint8_t)flash;
         });
     }
-    if (since < 45) {  // the kick's ring, just off the cover; the flow carries it out
-        const int d = 5, lv = 150 + (int)(80 * e);
-        for (int x = a.x0 - d; x < a.x1 + d; x++) raise(a, x, a.y0 - d, lv), raise(a, x, a.y1 + d - 1, lv);
-        for (int y = a.y0 - d; y < a.y1 + d; y++) raise(a, a.x0 - d, y, lv), raise(a, a.x1 + d - 1, y, lv);
+    if (since < 40) {  // the kick's ring, just off the cover; the flow carries it out
+        const int d = 5;
+        for (int x = a.x0 - d; x < a.x1 + d; x++) raise(a, x, a.y0 - d, lit), raise(a, x, a.y1 + d - 1, lit);
+        for (int y = a.y0 - d; y < a.y1 + d; y++) raise(a, a.x0 - d, y, lit), raise(a, a.x1 + d - 1, y, lit);
     }
 
-    const int beams = 3 + (int)(5 * e), pattern = s.nextBeat;
-    const float spread = 0.5f + 0.35f * fastSin(pattern * 2.3f);
-    for (int fan = 0; fan < 2; fan++) {
-        const int ox = fan ? Canvas::W - 1 : 0, oy = a.bottom - 1;
-        const float aim = fan ? -2.25f : -0.89f;  // up and in, toward the far top corner
-        const float sweep = 0.45f * fastSin(s.phase * (1.3f + 0.4f * fan) + pattern * 1.7f) * (fan ? -1 : 1);
+    if (look == 0) {  // laser tunnel: beams out from behind the cover, turning, more when loud
+        const int beams = 8 + (int)(8 * e);
+        const float turn = s.phase * 0.7f * (beatInBar & 1 ? -1 : 1);
         for (int b = 0; b < beams; b++) {
-            const float ang = aim + sweep + (b - (beams - 1) * 0.5f) * spread / beams;
-            laser(a, ox, oy, ox + (int)(420 * fastCos(ang) / K), oy + (int)(420 * fastSin(ang)), 170 + (int)(60 * in.beat));
+            const float ang = turn + b * (TAU / beams);
+            laser(a, (int)a.cx, (int)a.cy, (int)(a.cx + 300 * fastCos(ang) / K), (int)(a.cy + 300 * fastSin(ang)), lit);
+        }
+    } else if (look == 1) {  // laser sheets scanning: down on one beat, up on the next
+        const float t = beatInBar & 1 ? 1 - beatPhase : beatPhase;
+        const int sheets = e > 0.5f ? 3 : 2;
+        for (int k = 0; k < sheets; k++) {
+            const int y = (int)(fract(t + k / (float)sheets) * (a.bottom - 2)) + 1;
+            laser(a, 0, y, Canvas::W - 1, y, hi);
+        }
+        if (e > 0.6f) {  // and a vertical one sweeping across, when it's driving
+            const int x = (int)(fract(t * 2) * (Canvas::W - 1));
+            laser(a, x, 0, x, a.bottom - 1, lit);
+        }
+    } else if (look == 2) {  // LED wall: bars stepping across in sixteenths, brighter with the hats
+        const int step = (int)(beatPhase * 4) + beatInBar * 4;  // sixteenth of the bar
+        const int bars = 8, w = Canvas::W / bars;
+        const int level = (int)(120 + 110 * in.high);
+        for (int k = 0; k < bars; k++) {
+            const bool on = ((k + step) % 4 == 0) || (e > 0.55f && (k * 3 + step) % 8 == 0);
+            if (!on) continue;
+            for (int y = 0; y < a.bottom; y += 2)  // every other line: an LED panel's rows
+                for (int x = k * w + 1; x < (k + 1) * w - 1; x++) raise(a, x, y, level);
+        }
+    } else {  // fans from the floor corners, snapping to a new spread each beat
+        const int beams = 3 + (int)(5 * e);
+        const float spread = 0.5f + 0.35f * fastSin(n * 2.3f);
+        for (int fan = 0; fan < 2; fan++) {
+            const int ox = fan ? Canvas::W - 1 : 0, oy = a.bottom - 1;
+            const float aim = fan ? -2.25f : -0.89f;
+            const float sweep = 0.45f * fastSin(s.phase * (1.3f + 0.4f * fan) + n * 1.7f) * (fan ? -1 : 1);
+            for (int b = 0; b < beams; b++) {
+                const float ang = aim + sweep + (b - (beams - 1) * 0.5f) * spread / beams;
+                laser(a, ox, oy, ox + (int)(420 * fastCos(ang) / K), oy + (int)(420 * fastSin(ang)), lit);
+            }
         }
     }
-}
-
-// x - floor(x) without floorf.
-inline float fract(float x) {
-    x -= (float)(int)x;
-    return x < 0 ? x + 1.0f : x;
 }
 
 // log2 to about 1%, for the fractal's smooth colouring.
@@ -545,34 +584,60 @@ inline float fastLog2(float x) {
     return e + (-0.34484843f * u.f + 2.02466578f) * u.f - 0.67487759f;
 }
 
-// After Aleph: a Julia set worked out on a table of rings and spokes for one thirty-degree
-// wedge, mirrored twelvefold round the cover. Its constant wanders along a path of Julia sets
-// with the music, the bass pulses its zoom, the mids turn it, and thin contour lines flow out
-// through it faster as it gets louder; each beat sends a ring of light out through it.
+// After Aleph: an escape-time fractal worked out on a table of rings and spokes for one
+// thirty-degree wedge, mirrored twelvefold round the cover. It dives in and out, drifts through
+// a path of shapes faster as the music gets louder, and breathes its zoom with the bass. Every
+// beat punches the zoom and snaps it round (each the other way); a big transient (a drop, a hit
+// after a quiet stretch) flashes it and cuts to another family: Julia, cubic, burning ship,
+// tricorn.
 constexpr int FR = 48, FS = 24;               // rings, spokes
 constexpr float FR_MIN = 60, FR_MAX = 215;    // the rings' radii, px across (x K)
 uint8_t fractalTab[FR][FS];                   // static: too big for the render stack
 
 void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
-    static const float PATH[6][2] = {{-0.8f, 0.156f}, {-0.4f, 0.6f}, {-0.123f, 0.745f}, {0.285f, 0.01f}, {-0.70176f, -0.3842f}, {-0.835f, -0.2321f}};
+    static const float PATHS[4][4][2] = {
+        {{-0.8f, 0.156f}, {-0.4f, 0.6f}, {-0.123f, 0.745f}, {0.285f, 0.01f}},       // z^2 + c
+        {{0.50f, 0.00f}, {0.70f, -0.30f}, {0.50f, -0.70f}, {0.30f, -0.90f}},        // z^3 + c
+        {{0.30f, -0.20f}, {0.40f, -0.50f}, {-0.10f, 0.30f}, {0.60f, -0.80f}},       // burning ship
+        {{-0.95f, 0.25f}, {-0.30f, 0.80f}, {0.30f, -0.70f}, {-1.10f, 0.0f}},       // tricorn
+    };
+    const int beatsBefore = s.nextBeat;
     noteBeat(in, ms, s);
+    const bool beat = s.nextBeat != beatsBefore;
     const float e = smoothEnergy(in, dt, s);
-    s.phase += dt * (0.05f + 0.25f * e);  // along the path of sets
-    if (s.phase > 600.0f) s.phase -= 600.0f;
-    s.spin += dt * (0.08f + 0.5f * in.mid);
+    s.slow += (e - s.slow) * (1 - expf(-dt / 6));
+    if (beat) {
+        s.punch = 1;
+        s.turnKick += (s.nextBeat & 1 ? 1 : -1) * (0.12f + 0.3f * e);
+        if (e - s.slow > 0.15f && ms - s.lastDrop > 4000) {  // a transient: flash, and a new family
+            s.lastDrop = ms | 1;
+            s.mode = (s.mode + 1 + (s.nextBeat & 1)) % 4;
+            s.flash = 1;
+            s.phase += 1.5f;
+        }
+    }
+    s.punch *= expf(-dt * 5);
+    s.flash *= expf(-dt * 3);
+    const float kick = s.turnKick * (1 - expf(-dt * 12));
+    s.turnKick -= kick;
+    s.spin += dt * (0.06f + 0.5f * in.mid) + kick;
     if (s.spin > 6283.0f) s.spin -= 6283.0f;
-    s.flow += dt * (0.4f + 2.2f * e);
+    s.phase += dt * (0.04f + 0.35f * e);
+    if (s.phase > 400.0f) s.phase -= 400.0f;
+    s.flow += dt * (0.4f + 2.4f * e);
     if (s.flow > 1000.0f) s.flow -= 1000.0f;
 
-    const int at = (int)s.phase, next = (at + 1) % 6;
+    const int mode = s.mode;
+    const int at = (int)s.phase;
     float u = s.phase - at;
     u = u * u * (3 - 2 * u);
-    const float cr = PATH[at % 6][0] + (PATH[next][0] - PATH[at % 6][0]) * u + 0.02f * in.bass * fastSin(s.spin * 3);
-    const float ci = PATH[at % 6][1] + (PATH[next][1] - PATH[at % 6][1]) * u + 0.02f * in.mid * fastCos(s.spin * 2);
-    const float zoom = 1.2f * (1 - 0.12f * in.bass - 0.08f * in.beat);
+    const float(*P)[2] = PATHS[mode];
+    const float cr = P[at % 4][0] + (P[(at + 1) % 4][0] - P[at % 4][0]) * u + 0.025f * in.bass * fastSin(s.spin * 3);
+    const float ci = P[at % 4][1] + (P[(at + 1) % 4][1] - P[at % 4][1]) * u + 0.025f * in.mid * fastCos(s.spin * 2);
+    const float dive = 1 + 0.25f * fastSin(s.phase * 0.9f);  // slowly in and out
+    const float zoom = (mode == 2 ? 1.4f : 1.2f) * dive * (1 - 0.1f * in.bass - 0.22f * s.punch);
     constexpr int MAXN = 24;
-    // Where the last beats' rings of light are, as table rings.
-    float ringAt[6];
+    float ringAt[6];  // the last beats' rings of light, as table rings
     int rings = 0;
     for (int i = 0; i < 6; i++) {
         const uint32_t age = ms - s.beats[i];
@@ -580,10 +645,10 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     }
     for (int r = 0; r < FR; r++) {
         const float rad = (FR_MIN + (FR_MAX - FR_MIN) * r / (FR - 1)) / FR_MAX * zoom;
-        float beatLift = 0;
+        float lift = s.flash * 0.7f;
         for (int i = 0; i < rings; i++) {
             const float d = fabsf(r - ringAt[i]);
-            if (d < 2.5f) beatLift += (1 - d / 2.5f) * 0.6f;
+            if (d < 2.5f) lift += (1 - d / 2.5f) * (0.25f + 0.45f * e);
         }
         for (int k = 0; k < FS; k++) {
             const float th = (k + 0.5f) * (0.5235988f / FS) + s.spin;
@@ -594,8 +659,16 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
                 const float zr2 = zr * zr, zi2 = zi * zi;
                 m2 = zr2 + zi2;
                 if (m2 > 256.0f) break;
-                zi = 2 * zr * zi + ci;
-                zr = zr2 - zi2 + cr;
+                if (mode == 1) {
+                    const float nr = zr * (zr2 - 3 * zi2) + cr;
+                    zi = zi * (3 * zr2 - zi2) + ci, zr = nr;
+                } else if (mode == 2) {
+                    zi = fabsf(2 * zr * zi) + ci, zr = zr2 - zi2 + cr;
+                } else if (mode == 3) {
+                    zi = -2 * zr * zi + ci, zr = zr2 - zi2 + cr;
+                } else {
+                    zi = 2 * zr * zi + ci, zr = zr2 - zi2 + cr;
+                }
             }
             float v = 0.05f;
             if (n < MAXN) {  // smooth escape time: a body that brightens toward the set, and flowing contour lines
@@ -603,11 +676,11 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
                 const float mu = n + 1 - fastLog2(l > 0.05f ? l : 0.05f);
                 float body = mu / 12;
                 body = body > 1 ? 1 : sqrtf(body);
-                const float x = fract(mu * 0.8f - s.flow);
-                const float line = x < 0.22f ? 1 - x / 0.22f : 0;
+                const float x = fract(mu * 1.5f - s.flow);
+                const float line = x < 0.3f ? 1 - x / 0.3f : 0;
                 v = 0.08f + 0.55f * body + line * (0.3f + 0.3f * e) * (0.4f + 0.6f * body);
             }
-            v += beatLift * (0.4f + 0.6f * e);
+            v += lift;
             fractalTab[r][k] = (uint8_t)(v >= 1 ? TOP : v * TOP);
         }
     }
@@ -618,12 +691,11 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
         int r = (int)((rr - FR_MIN) * ((FR - 1) / (FR_MAX - FR_MIN)));
         if (r < 0) r = 0;
         if (r >= FR) return 0;
-        // The angle in 0..90 degrees, then folded into 0..30 (mirrored every thirty).
         const float lo = px < py ? px : py, hi = px < py ? py : px;
         const float t = hi > 0 ? lo / hi : 0;
         float ang = t * (0.9724f - 0.1919f * t * t);  // atan, 0..pi/4
         if (py > px) ang = 1.5707963f - ang;
-        ang = fract(ang * (1 / 1.0471976f)) * 2;  // in sixty-degree pieces, 0..2
+        ang = fract(ang * (1 / 1.0471976f)) * 2;  // in sixty-degree pieces, 0..2, mirrored
         if (ang > 1) ang = 2 - ang;
         const int k = (int)(ang * FS);
         return (int)fractalTab[r][k < FS ? k : FS - 1];

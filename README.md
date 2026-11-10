@@ -142,6 +142,18 @@ extension or the command-line tool (`brew install platformio`).
    pio device monitor
    ```
 
+   After that, updates can go over Wi-Fi: put any password in `OTA_PASSWORD` in
+   `include/secrets.h` (before that first USB flash), then
+
+   ```bash
+   tools/ota.sh
+   ```
+
+   builds the firmware, finds the display by the broadcast it makes every 2 seconds and
+   sends it (or name it: `tools/ota.sh 192.168.1.82`). The picture freezes while the update
+   goes in, then the display restarts into it. macOS may ask once to let Python accept the
+   connection back from the board.
+
 On boot you'll see the clock with status messages underneath ("Connecting
 to Wi-Fi…", "Setting the clock…") until everything is up. Then start
 something in Spotify on any device.

@@ -27,6 +27,9 @@ struct VizState {
     float spin = 0, phase = 0;
     float energy = 0;  // the music's loudness, smoothed (0..1)
     float flow = 0;    // the fractal's contour lines
+    float slow = 0, punch = 0, flash = 0, turnKick = 0;  // the fractal's slow energy and beat kicks
+    uint32_t lastDrop = 0;
+    int mode = 0;
     uint32_t beats[6] = {};  // when recent beats landed (ms)
     int nextBeat = 0;
     bool beatHeld = false;
