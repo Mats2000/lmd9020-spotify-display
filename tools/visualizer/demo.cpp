@@ -63,10 +63,11 @@ extern "C" void lmd_demo_set_playing(int playing, int paused) {
     np.paused = paused != 0;
 }
 
-extern "C" void lmd_demo_render(const uint8_t* bands, uint8_t beat, int active, int style, int scheme, uint32_t ms, int hour,
+extern "C" void lmd_demo_render(const uint8_t* bands, const int8_t* wave, uint8_t beat, int active, int style, int scheme, uint32_t ms, int hour,
                                 int minute, int wday, int mon, int mday, uint8_t* out) {
     setup();
     if (bands) memcpy(np.audio.band, bands, sizeof(np.audio.band));
+    if (wave) memcpy(np.audio.wave, wave, sizeof(np.audio.wave));
     np.audio.beat = beat;
     np.audio.style = (uint8_t)style;
     np.audio.scheme = (uint8_t)scheme;

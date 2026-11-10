@@ -192,76 +192,105 @@ void noteBeat(const VizInput& in, uint32_t ms, VizState& s) {
 
 // ---- The styles ----
 
-// After the classic iTunes visualizer (G-Force): each frame a fresh outline of light round the
-// edge of the screen, bent by the spectrum, and loops spinning round the cover (one when quiet,
-// up to three when loud); the whole picture flows in toward the cover, turning as it goes, so
-// past frames shrink into it as a tunnel and the loops leave spirals. Louder music pulls faster,
-// spins and twists more; beats flare the lines.
-void glow(Area& a, float dt, const VizInput& in, VizState& s) {
-    const float loud = (in.bass + in.mid + in.high) / 3;
-    s.energy += (loud - s.energy) * (1 - expf(-dt / (loud > s.energy ? 0.4f : 1.5f)));
-    const float e = s.energy < 1 ? s.energy : 1;
-    s.phase += dt * (0.5f + 1.5f * e);
-    if (s.phase > 6283.0f) s.phase -= 6283.0f;
-    s.spin += dt * (0.25f + 0.9f * e + 0.5f * in.mid);
+float smoothEnergy(const VizInput& in, float dt, VizState& s);
 
-    // The flow: in toward the middle (sources further out), turning, with a slow ripple in the
-    // pull and a swirl that is strongest near the cover and swings from one way to the other.
-    const float pull = 1 + dt * (0.45f + 1.6f * e + 1.4f * in.beat);
-    const float turn = dt * (0.12f + 0.5f * in.mid) * fastSin(s.phase * 0.21f + 1);
-    const float swirl = dt * (0.6f + 1.6f * e) * fastSin(s.phase * 0.37f);
+// The waveform at u (0..1 along its 64 samples), -1..1, between samples.
+inline float waveAt(const VizInput& in, float u) {
+    const float at = u * 62.999f;
+    const int i = (int)at;
+    return (in.wave[i] + (in.wave[i + 1] - in.wave[i]) * (at - i)) * (1 / 127.0f);
+}
+
+// After the classic iTunes visualizer (G-Force): the sound's own waveform drawn into a picture
+// that flows outward and turns, so each frame's lines rush out past the edges like a tunnel
+// toward you. The wave shape changes every 15 s, or on a big transient: the waveform as a ring
+// round the cover, along spinning spiral arms, as oscilloscope traces, or riding lobed loops.
+// Louder music flows faster, turns more and draws bigger and brighter.
+void glow(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
+    const int beatsBefore = s.nextBeat;
+    noteBeat(in, ms, s);
+    const float e = smoothEnergy(in, dt, s);
+    s.slow += (e - s.slow) * (1 - expf(-dt / 6));
+    s.phase += dt * (0.3f + 1.2f * e);
+    if (s.phase > 6283.0f) s.phase -= 6283.0f;
+    s.spin += dt * (0.4f + 1.5f * e + 0.6f * in.mid);
+    if (s.spin > 6283.0f) s.spin -= 6283.0f;
+    s.shapeTime += dt;
+    if (s.shapeTime > 15 || (s.nextBeat != beatsBefore && e - s.slow > 0.15f && s.shapeTime > 4)) {
+        s.lastShape = s.mode;
+        s.mode = (s.mode + 1) % 4;
+        s.shapeTime = 0;
+    }
+
+    // The flow: out from the middle (sources nearer it), turning more toward the edges, with a
+    // ripple running through the pull.
+    const float push = 1 - dt * (0.3f + 1.1f * e + 0.9f * in.beat);
+    const float turn = dt * (0.2f + 0.8f * in.mid) * fastSin(s.phase * 0.23f + 1);
     for (int j = 0; j <= MESH; j++)
         for (int i = 0; i <= MESH; i++) {
             const float u = (i * (Canvas::W / MESH) - a.cx) * K, v = j * (Canvas::H / MESH) - a.cy;
             const float r = sqrtf(u * u + v * v);
-            const float z = pull * (1 + 0.012f * fastSin(r * 0.07f - s.phase * 2.3f));
-            const float th = turn + swirl * 70 / (r + 70);
+            const float z = push * (1 + 0.012f * fastSin(r * 0.08f - s.phase * 3));
+            const float th = turn * (0.4f + r / 160);
             const float c = fastCos(th) * z, sn = fastSin(th) * z;
             flowMesh.x[j][i] = (int32_t)((a.cx + (u * c - v * sn) / K) * 65536);
             flowMesh.y[j][i] = (int32_t)((a.cy + u * sn + v * c) * 65536);
         }
-    feedback(a, s.fed, flowMesh, keepFor(dt, 0.75f - 0.35f * e), 1);
+    feedback(a, s.fed, flowMesh, keepFor(dt, 1.2f - 0.5f * e), 1);
 
-    // The outline: a rounded rectangle just inside the edges, pushed in by the spectrum (lows at
-    // the sides, highs top and bottom, mirrored), rippling with the highs.
-    const float ru = (a.cx - 4) * K, rv = (a.cy < a.bottom - a.cy ? a.cy : a.bottom - a.cy) - 6;
-    const int strength = 120 + (int)(80 * e) + (int)(110 * in.beat);
-    {
-        const float inset = 1.0f, offset = 0;
+    const float amp = 16 + 34 * e + 10 * in.beat;
+    const int bright = 110 + (int)(90 * e) + (int)(90 * in.beat);
+    auto shape = [&](int which, int level) {
         int px = 0, py = 0;
-        constexpr int N = 160;
-        for (int k = 0; k <= N; k++) {
-            const float t = k * (TAU / N) + offset, ct = fastCos(t), st = fastSin(t);
-            // Squarer than an ellipse: |c|^0.6 keeps the corners full.
-            const float cx = ct < 0 ? -powf(-ct, 0.6f) : powf(ct, 0.6f), cy = st < 0 ? -powf(-st, 0.6f) : powf(st, 0.6f);
-            const float around = fabsf(st);  // 0 at the sides .. 1 top and bottom
-            const float at = around * 14.99f;
-            const int b0 = (int)at;
-            const float band = (in.band[b0] + (in.band[b0 + 1] - in.band[b0]) * (at - b0)) / 255.0f;
-            const float m = inset * (1 - 0.16f * band - 0.03f * in.high * fastSin(t * 23 + s.spin * 5) -
-                                     0.025f * fastSin(t * 5 + s.spin * 2));
-            const int nx = (int)(a.cx + ru * cx * m / K), ny = (int)(a.cy + rv * cy * m);
-            if (k > 0) stroke(a, px, py, nx, ny, strength);
+        auto to = [&](int k, float u, float v) {  // u, v: from the cover's centre, u across (x K)
+            const int nx = (int)(a.cx + u / K), ny = (int)(a.cy + v);
+            if (k > 0) stroke(a, px, py, nx, ny, level);
             px = nx, py = ny;
+        };
+        if (which == 0) {  // a ring round the cover, its radius the waveform (mirrored, so it closes)
+            constexpr int N = 128;
+            for (int k = 0; k <= N; k++) {
+                const float t = k * (TAU / N), w = waveAt(in, k < N / 2 ? 2.0f * k / N : 2.0f * (N - k) / N);
+                const float r = 108 + amp * w;
+                to(k, r * fastCos(t + s.spin), r * fastSin(t + s.spin));
+            }
+        } else if (which == 1) {  // three spiral arms turning, the waveform across each
+            for (int arm = 0; arm < 3; arm++) {
+                const float base = s.spin * 1.3f + arm * (TAU / 3);
+                for (int k = 0; k <= 48; k++) {
+                    const float f = k / 48.0f, r = 96 + 110 * f, t = base + f * 1.6f;
+                    const float off = amp * 0.7f * waveAt(in, f);
+                    to(k, r * fastCos(t) - off * fastSin(t), r * fastSin(t) + off * fastCos(t));
+                }
+            }
+        } else if (which == 2) {  // oscilloscope traces: above and below the cover, and either side
+            for (int side = 0; side < 4; side++) {
+                for (int k = 0; k <= 48; k++) {
+                    const float f = k / 48.0f, w = amp * 0.8f * waveAt(in, f);
+                    if (side < 2) {
+                        const float v = (side ? 1 : -1) * 100, u = (f - 0.5f) * 300;
+                        to(k, u, v + w);
+                    } else {
+                        const float u = (side == 3 ? 1 : -1) * 120, v = (f - 0.5f) * 200;
+                        to(k, u + w, v);
+                    }
+                }
+            }
+        } else {  // lobed loops spinning round the cover, the waveform riding them
+            for (int curve = 0; curve < 2; curve++) {
+                const float r0 = 100 + 30 * e + curve * 16, lobes = 3 + curve;
+                for (int k = 0; k <= 128; k++) {
+                    const float t = k * (TAU / 128);
+                    const float w = waveAt(in, k < 64 ? k / 64.0f : (128 - k) / 64.0f);
+                    const float r = r0 * (1 + (0.16f + 0.1f * e) * fastSin(t * lobes + s.spin * (2 + curve))) + amp * 0.5f * w;
+                    const float ang = t + s.spin * (curve ? -1.2f : 1.4f);
+                    to(k, r * fastCos(ang), r * fastSin(ang));
+                }
+            }
         }
-    }
-    // The loops: lobed rings spinning round the cover, each the next way round.
-    for (int curve = 0; curve < 3; curve++) {
-        const float on = curve == 0 ? 1 : (e - (curve == 1 ? 0.22f : 0.45f)) / 0.12f;  // later ones as it gets louder
-        if (on <= 0) continue;
-        const int bright = (int)((90 + 110 * e + 110 * in.beat + 40 * in.bass) * (on < 1 ? on : 1));
-        const float r0 = 98 + 40 * e + 30 * in.bass + curve * 14, wobble = 0.16f + 0.12f * e + 0.05f * curve;
-        const float wiggle = 0.18f * in.high, lobes = 3 + curve;
-        int px = 0, py = 0;
-        for (int k = 0; k <= 180; k++) {
-            const float t = k * (TAU / 180);
-            const float r = r0 * (1 + wobble * fastSin(t * lobes + s.spin * (2 + curve)) + wiggle * fastSin(t * 9 - s.spin * 6));
-            const float angle = t + s.spin * (curve == 1 ? -1.2f : 1.4f - 0.5f * curve);
-            const int nx = (int)(a.cx + r * fastCos(angle) / K), ny = (int)(a.cy + r * fastSin(angle));
-            if (k > 0) stroke(a, px, py, nx, ny, bright);
-            px = nx, py = ny;
-        }
-    }
+    };
+    if (s.shapeTime < 1.5f) shape(s.lastShape, (int)(bright * (1 - s.shapeTime / 1.5f)));  // the last one fading
+    shape(s.mode, s.shapeTime < 1.5f ? (int)(bright * s.shapeTime / 1.5f) : bright);
 }
 
 // Light through the glass: a fine glow round what's lit in [x0, x1) x [y0, y1), which must
@@ -492,8 +521,8 @@ inline float fract(float x) {
 }
 
 // A techno rave: a warehouse rig locked to the kick. Every bar (four beats) it cuts to the next
-// look: a laser tunnel turning out from behind the cover, laser sheets scanning up and down on
-// the beat, an LED wall chasing in sixteenths, then fans from the floor corners. Through all of
+// look: a square tunnel (frames of light leaving the cover on the eighths), laser sheets scanning
+// up and down on the beat, an LED wall chasing in sixteenths, then fans from the floor corners. Through all of
 // them a hard strobe on each kick, a ring of light leaving the cover, and haze streaking out.
 void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     noteBeat(in, ms, s);
@@ -506,16 +535,18 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
             flowMesh.x[j][i] = (int32_t)((a.cx + (i * (Canvas::W / MESH) - a.cx) * push) * 65536);
             flowMesh.y[j][i] = (int32_t)((a.cy + (j * (Canvas::H / MESH) - a.cy) * push) * 65536);
         }
-    feedback(a, s.fed, flowMesh, keepFor(dt, 9.0f - 4.0f * e), 1);
+    feedback(a, s.fed, flowMesh, keepFor(dt, s.step >= 0 && (s.step / 16) % 4 == 0 ? 2.0f : 9.0f - 4.0f * e), 1);  // the tunnel keeps its frames
 
     // Where we are in the beat: the last kick, and the beat's length from the last two.
     const int n = s.nextBeat;
     const uint32_t last = n ? s.beats[(n - 1) % 6] : 0, prev = n > 1 ? s.beats[(n - 2) % 6] : 0;
     uint32_t period = last && prev ? last - prev : 500;
     if (period < 280 || period > 900) period = 500;
-    const uint32_t since = last ? ms - last : 100000;
-    const float beatPhase = since < period ? (float)since / period : 1;  // 0..1 through this beat
-    const int look = (n / 4) % 4, beatInBar = n % 4;
+    // Between kicks (or through a breakdown) it keeps counting at the last tempo.
+    const uint32_t since = last ? ms - last : ms;
+    const int counted = n + (int)(since / period);
+    const float beatPhase = (float)(since % period) / period;  // 0..1 through this beat
+    const int look = (counted / 4) % 4, beatInBar = counted % 4;
     const int hi = TOP, lit = 150 + (int)(70 * e);
 
     if (since < 70) {  // the strobe: hard and short, everything off the cover
@@ -530,12 +561,17 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
         for (int y = a.y0 - d; y < a.y1 + d; y++) raise(a, a.x0 - d, y, lit), raise(a, a.x1 + d - 1, y, lit);
     }
 
-    if (look == 0) {  // laser tunnel: beams out from behind the cover, turning, more when loud
-        const int beams = 8 + (int)(8 * e);
-        const float turn = s.phase * 0.7f * (beatInBar & 1 ? -1 : 1);
-        for (int b = 0; b < beams; b++) {
-            const float ang = turn + b * (TAU / beams);
-            laser(a, (int)a.cx, (int)a.cy, (int)(a.cx + 300 * fastCos(ang) / K), (int)(a.cy + 300 * fastSin(ang)), lit);
+    const int sixteenth = counted * 4 + (int)(beatPhase * 4);
+    const bool newStep = sixteenth != s.step;
+    s.step = sixteenth;
+    if (look == 0) {  // square tunnel: a frame the cover's shape on every eighth (the sixteenths too
+                      // when it's driving), the downbeat brightest; the flow carries them out
+        if (newStep && ((sixteenth & 1) == 0 || e > 0.6f)) {
+            const int d = 9, lv = (sixteenth & 15) == 0 ? hi : ((sixteenth & 1) ? lit / 2 : lit);  // past the cover's soft edge
+            for (int x = a.x0 - d; x < a.x1 + d; x++)
+                for (int t = 0; t < 2; t++) raise(a, x, a.y0 - d - t, lv), raise(a, x, a.y1 + d - 1 + t, lv);
+            for (int y = a.y0 - d; y < a.y1 + d; y++)
+                for (int t = 0; t < 2; t++) raise(a, a.x0 - d - t, y, lv), raise(a, a.x1 + d - 1 + t, y, lv);
         }
     } else if (look == 1) {  // laser sheets scanning: down on one beat, up on the next
         const float t = beatInBar & 1 ? 1 - beatPhase : beatPhase;
@@ -560,11 +596,11 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
         }
     } else {  // fans from the floor corners, snapping to a new spread each beat
         const int beams = 3 + (int)(5 * e);
-        const float spread = 0.5f + 0.35f * fastSin(n * 2.3f);
+        const float spread = 0.5f + 0.35f * fastSin(counted * 2.3f);
         for (int fan = 0; fan < 2; fan++) {
             const int ox = fan ? Canvas::W - 1 : 0, oy = a.bottom - 1;
             const float aim = fan ? -2.25f : -0.89f;
-            const float sweep = 0.45f * fastSin(s.phase * (1.3f + 0.4f * fan) + n * 1.7f) * (fan ? -1 : 1);
+            const float sweep = 0.45f * fastSin(s.phase * (1.3f + 0.4f * fan) + counted * 1.7f) * (fan ? -1 : 1);
             for (int b = 0; b < beams; b++) {
                 const float ang = aim + sweep + (b - (beams - 1) * 0.5f) * spread / beams;
                 laser(a, ox, oy, ox + (int)(420 * fastCos(ang) / K), oy + (int)(420 * fastSin(ang)), lit);
@@ -714,7 +750,7 @@ void drawVisualizer(int style, Canvas& c, int x0, int y0, int x1, int y1, int bo
         case VIZ_LAVA: lava(a, dt, in, s); break;
         case VIZ_RAVE: rave(a, dt, ms, in, s); break;
         case VIZ_FRACTAL: fractal(a, dt, ms, in, s); break;
-        default: glow(a, dt, in, s); break;
+        default: glow(a, dt, ms, in, s); break;
     }
     if (s.spin > 6283.0f) s.spin -= 6283.0f;
     finish(a);

@@ -263,7 +263,7 @@ void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms) {
             for (int i = from; i < to; i++) s += a.band[i];
             return s / (255.0f * (to - from));
         };
-        const VizInput in{a.band, mean(0, 4), mean(5, 11), mean(11, 16), a.beat / 255.0f};
+        const VizInput in{a.band, mean(0, 4), mean(5, 11), mean(11, 16), a.beat / 255.0f, a.wave};
         const int x0 = ART_X + d.x, y0 = ART_Y + d.y;
         // The style stays put while fading out, though the music has stopped saying which.
         if (heard) {

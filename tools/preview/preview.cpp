@@ -107,6 +107,13 @@ int main(int argc, char** argv) {
                       hat * fmaxf(0, (x - 0.7f) / 0.3f) * 0.75f;
             np.audio.band[i] = (uint8_t)(fminf(1, v) * 255);
         }
+        for (int i = 0; i < 64; i++) {  // its waveform: 64 samples 4/48000 s apart
+            const float ts = t * 0.001f + i * (4.0f / 48000);
+            const float noise = sinf(ts * 91733.1f) * sinf(ts * 51511.7f);
+            const float w = kick * sinf(6.2831853f * 55 * ts) * 0.9f + bass * sinf(6.2831853f * 110 * ts) * 0.45f +
+                            pad * sinf(6.2831853f * 330 * ts + sinf(ts * 3)) * 0.3f + hat * noise * 0.45f;
+            np.audio.wave[i] = (int8_t)fmaxf(-127, fminf(127, w * 110));
+        }
         np.audio.beat = (uint8_t)(kick * 255);
         np.audio.active = true;
         np.audio.atMs = t | 1;

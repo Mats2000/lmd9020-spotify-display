@@ -19,6 +19,7 @@ enum VizStyle {
 struct VizInput {
     const uint8_t* band;  // 16, low to high, 0..255
     float bass, mid, high, beat;  // 0..1
+    const int8_t* wave;   // 64 samples of the waveform, -127..127
 };
 
 // What a visualizer keeps from frame to frame.
@@ -29,7 +30,9 @@ struct VizState {
     float flow = 0;    // the fractal's contour lines
     float slow = 0, punch = 0, flash = 0, turnKick = 0;  // the fractal's slow energy and beat kicks
     uint32_t lastDrop = 0;
-    int mode = 0;
+    int mode = 0, lastShape = 0;
+    float shapeTime = 0;  // how long the glow has had its wave shape
+    int step = -1;        // the rave's last sixteenth
     uint32_t beats[6] = {};  // when recent beats landed (ms)
     int nextBeat = 0;
     bool beatHeld = false;

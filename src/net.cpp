@@ -245,7 +245,7 @@ void vizTask(void*) {
             sendto(s, HELLO, sizeof(HELLO) - 1, 0, (sockaddr*)&b, sizeof(b));
             lastAnnounce = millis();
         }
-        uint8_t buf[32];
+        uint8_t buf[96];
         int len = recv(s, buf, sizeof(buf), 0);
         if (len >= 24 && memcmp(buf, "LMDV", 4) == 0 && buf[4] == 1) {
             xSemaphoreTake(lock, portMAX_DELAY);
@@ -255,6 +255,8 @@ void vizTask(void*) {
             memcpy(shared.audio.band, buf + 8, sizeof(shared.audio.band));
             shared.audio.style = len >= 25 ? buf[24] : 0;
             shared.audio.scheme = len >= 26 ? buf[25] : 0;
+            if (len >= 26 + 64) memcpy(shared.audio.wave, buf + 26, 64);
+            else memset(shared.audio.wave, 0, 64);
             shared.audio.atMs = millis() | 1;
             xSemaphoreGive(lock);
         }

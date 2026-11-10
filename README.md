@@ -204,17 +204,20 @@ composite. When the app isn't running, or Spotify plays somewhere else, the card
 to its solid background. The app's window shows a live preview of the display, drawn by the
 firmware's own scene code, and picks the style:
 
-- **Classic Glow:** after the classic iTunes visualizer (G-Force): loops spinning round the cover
-  and an outline of light round the edge, bent by the spectrum, all flowing in toward the cover
-  and turning, so past frames shrink into it as a tunnel. One loop when the music is quiet, up
-  to three, faster and wilder, when it's loud.
+- **Classic Glow:** after the classic iTunes visualizer (G-Force): the music's own waveform
+  (the app sends 64 samples of it with every update) drawn into a picture that flows outward and
+  turns, so each frame's lines rush out like a tunnel toward you. The wave shape changes every
+  15 seconds or on a big transient: a ring round the cover, spinning spiral arms, oscilloscope
+  traces, or lobed loops. Louder music flows faster, turns more and draws bigger.
 - **Spectrum:** a 2000s receiver's fluorescent analyzer, split by the cover (lows at the left,
   highs at the right): soft pills of ice-white phosphor behind dark glass, bars that move like
   a meter's needle, peaks that hold then fall away.
 - **Pulse Halo:** a glow breathing around the cover, rippling outward on each beat.
 - **Lava:** slow, smooth colour waves, quicker and brighter with the music.
-- **Rave:** laser fans sweeping up from the bottom corners, snapping to a new pattern on every
-  beat, a ring of light rushing out from the cover on each kick, and flashes on the strongest.
+- **Rave:** a techno rig locked to the kick, cutting every bar to the next look: a square
+  tunnel (frames the cover's shape leaving it on the eighths), laser sheets scanning on the beat,
+  an LED wall chasing in sixteenths, fans from the floor corners; a strobe and a ring of light on
+  every kick. Between kicks it keeps counting at the last tempo.
 - **Fractal:** after Aleph: a Julia set mirrored twelvefold round the cover, its shape wandering
   with the music, the bass pulsing its zoom, contour lines flowing through it and a ring of light
   on each beat.

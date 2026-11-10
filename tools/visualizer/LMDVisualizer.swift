@@ -16,13 +16,15 @@ let displayPort: UInt16 = 4210  // the display listens here and announces itself
 let bandCount = 16
 let fftSize = 2048
 let updatesPerSecond = 60.0
+let waveCount = 64
 let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava", "Rave", "Fractal"]  // VizStyle order
 let schemes = ["Cover Colours", "Sentia", "Ice", "Amber", "Soft Club"]  // ColourScheme order
 
 // MARK: - Network
 
 // Learns the display's address from its broadcast ("LMD9020 1" every 2 s), then sends it
-// packets: "LMDV", version 1, flags (bit 0: music playing), level, beat, 16 bands, style, colour scheme.
+// packets: "LMDV", version 1, flags (bit 0: music playing), level, beat, 16 bands, style, colour scheme,
+// then 64 samples of the waveform (signed bytes, about 5 ms, scaled to fill).
 final class Link {
     private let sock: Int32
     private var target: sockaddr_in?
@@ -94,6 +96,7 @@ final class Analyzer {
     struct Reading {
         var bands = [UInt8](repeating: 0, count: bandCount)
         var beat: UInt8 = 0
+        var wave = [UInt8](repeating: 0, count: waveCount)  // signed bytes
         var playing = false
         var at = Date.distantPast
     }
@@ -113,6 +116,7 @@ final class Analyzer {
     private var sampleRate = 48000.0
     private let lock = NSLock()
     private var last = Reading()
+    private var wavePeak: Float = 0.05
     private let send: ([UInt8]) -> Void
     private var chosen: UInt8 = 0
     private var colours: UInt8 = 0
@@ -150,6 +154,7 @@ final class Analyzer {
         packet += [UInt8](repeating: 0, count: bandCount)
         packet.append(style)
         packet.append(scheme)
+        packet += [UInt8](repeating: 0, count: waveCount)
         send(packet)
     }
 
@@ -165,6 +170,20 @@ final class Analyzer {
                 analyze()
             }
         }
+    }
+
+    // The latest 256 samples, every 4th: the waveform's shape, scaled by a slow peak so quiet
+    // passages still fill the bytes.
+    private func waveform() -> [UInt8] {
+        var peak: Float = 0
+        var picked = [Float](repeating: 0, count: waveCount)
+        for i in 0..<waveCount {
+            let v = ring[(at - waveCount * 4 + i * 4 + fftSize * 2) % fftSize]
+            picked[i] = v
+            peak = max(peak, abs(v))
+        }
+        wavePeak = max(peak, wavePeak * 0.97, 0.01)
+        return picked.map { UInt8(bitPattern: Int8(max(-127, min(127, $0 / wavePeak * 120)))) }
     }
 
     private func analyze() {
@@ -228,10 +247,12 @@ final class Analyzer {
         packet += quantised
         packet.append(style)
         packet.append(scheme)
+        let wave = waveform()
+        packet += wave
         send(packet)
 
         lock.lock()
-        last = Reading(bands: quantised, beat: UInt8(beat * 255), playing: playing, at: Date())
+        last = Reading(bands: quantised, beat: UInt8(beat * 255), wave: wave, playing: playing, at: Date())
         lock.unlock()
     }
 }
@@ -508,10 +529,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let c = cal.dateComponents([.hour, .minute, .second, .weekday, .month, .day], from: now)
         let ms = UInt32(truncatingIfNeeded: Int(now.timeIntervalSince(started) * 1000))
         r.bands.withUnsafeBufferPointer { b in
+            r.wave.withUnsafeBufferPointer { w in
             frame.withUnsafeMutableBufferPointer { out in
-                lmd_demo_render(b.baseAddress, r.beat, r.playing && analyzer.enabled ? 1 : 0, Int32(analyzer.style), Int32(analyzer.scheme), ms, Int32(c.hour ?? 0),
+                lmd_demo_render(b.baseAddress, UnsafeRawPointer(w.baseAddress!).assumingMemoryBound(to: Int8.self), r.beat, r.playing && analyzer.enabled ? 1 : 0, Int32(analyzer.style), Int32(analyzer.scheme), ms, Int32(c.hour ?? 0),
                                 Int32(c.minute ?? 0), Int32((c.weekday ?? 1) - 1), Int32((c.month ?? 1) - 1), Int32(c.day ?? 1),
                                 out.baseAddress)
+            }
             }
         }
         let provider = CGDataProvider(data: Data(frame) as CFData)!
