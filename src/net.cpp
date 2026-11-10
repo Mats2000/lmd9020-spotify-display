@@ -1,12 +1,16 @@
 #include "net.h"
 
+#include <MD5Builder.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
 #include <lwip/sockets.h>
+#include <mbedtls/sha256.h>
 #include <stdarg.h>
 #include <time.h>
 
 #include "config.h"
 #include "cover.h"
+#include "https.h"
 #include "render/text.h"
 #include "spotify.h"
 
@@ -91,7 +95,83 @@ bool loadTrack(const Track& t) {
 bool placeholder(const char* s) { return strncmp(s, "PASTE", 5) == 0 || !s[0]; }
 
 volatile uint32_t beatMs, spotifyMs;  // see netSinceBeat(), netSinceSpotify()
-volatile bool paused = false;          // see netPause()
+
+// An update over Wi-Fi asked for by tools/ota.sh (a packet "LMDU size md5 token port" on the
+// visualizer's port): fetched from the asker on `port`, if token is SHA-256 of
+// "OTA_PASSWORD:md5". Nothing is allocated for it until then.
+struct UpdateRequest {
+    volatile bool pending = false;
+    uint32_t ip = 0, size = 0;
+    uint16_t port = 0;
+    char md5[33] = "", token[65] = "";
+} update;
+
+void runUpdate() {
+    UpdateRequest r;
+    r.ip = update.ip, r.size = update.size, r.port = update.port;
+    memcpy(r.md5, update.md5, sizeof(r.md5));
+    memcpy(r.token, update.token, sizeof(r.token));
+    update.pending = false;
+#ifdef OTA_PASSWORD
+    if (strncmp(OTA_PASSWORD, "PASTE", 5) == 0) return;
+    char proof[160];
+    snprintf(proof, sizeof(proof), "%s:%s", OTA_PASSWORD, r.md5);
+    uint8_t sum[32];
+    mbedtls_sha256_ret((const uint8_t*)proof, strlen(proof), sum, 0);
+    char hex[65];
+    for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", sum[i]);
+    if (strcmp(hex, r.token) != 0) {
+        Serial.println("Update over Wi-Fi refused: wrong password");
+        return;
+    }
+    const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
+    if (!part || r.size == 0 || r.size > part->size) {
+        Serial.println("Update over Wi-Fi refused: no room for it");
+        return;
+    }
+    Serial.printf("Update over Wi-Fi: %u bytes\n", (unsigned)r.size);
+    https.close();
+    WiFiClient c;
+    esp_ota_handle_t h;
+    if (!c.connect(IPAddress(r.ip), r.port, 5000) || esp_ota_begin(part, r.size, &h) != ESP_OK) {
+        Serial.println("Update over Wi-Fi failed to start");
+        return;
+    }
+    MD5Builder md5;
+    md5.begin();
+    uint8_t buf[1024];
+    uint32_t got = 0, heard = millis();
+    while (got < r.size && millis() - heard < 10000) {
+        const int n = c.read(buf, r.size - got < sizeof(buf) ? r.size - got : sizeof(buf));
+        if (n <= 0) {
+            if (!c.connected() && !c.available()) break;
+            delay(2);
+            continue;
+        }
+        if (esp_ota_write(h, buf, n) != ESP_OK) break;
+        md5.add(buf, n);
+        got += n;
+        heard = beatMs = millis();
+    }
+    md5.calculate();
+    if (got != r.size || md5.toString() != r.md5) {
+        esp_ota_abort(h);
+        Serial.printf("Update over Wi-Fi failed (%u of %u bytes)\n", (unsigned)got, (unsigned)r.size);
+        c.print("FAIL\n");
+        return;
+    }
+    if (esp_ota_end(h) != ESP_OK || esp_ota_set_boot_partition(part) != ESP_OK) {
+        Serial.println("Update over Wi-Fi failed to finish");
+        c.print("FAIL\n");
+        return;
+    }
+    Serial.println("Update over Wi-Fi: done, restarting");
+    c.print("OK\n");
+    c.flush();
+    delay(300);
+    esp_restart();
+#endif
+}
 
 void netTask(void*) {
     beatMs = spotifyMs = millis();
@@ -127,11 +207,7 @@ void netTask(void*) {
 
     for (;;) {
         beatMs = millis();
-        if (paused) {
-            spotifyMs = millis();
-            vTaskDelay(pdMS_TO_TICKS(200));
-            continue;
-        }
+        if (update.pending) runUpdate();
         if (WiFi.status() != WL_CONNECTED) {
             setStatus("Connecting to Wi-Fi “%s”…", WIFI_SSID);
             setPlaying(false, true);
@@ -245,8 +321,19 @@ void vizTask(void*) {
             sendto(s, HELLO, sizeof(HELLO) - 1, 0, (sockaddr*)&b, sizeof(b));
             lastAnnounce = millis();
         }
-        uint8_t buf[96];
-        int len = recv(s, buf, sizeof(buf), 0);
+        uint8_t buf[160];
+        sockaddr_in from = {};
+        socklen_t fromLen = sizeof(from);
+        int len = recvfrom(s, buf, sizeof(buf) - 1, 0, (sockaddr*)&from, &fromLen);
+        if (len > 5 && memcmp(buf, "LMDU ", 5) == 0 && !update.pending) {  // tools/ota.sh asking
+            buf[len] = 0;
+            unsigned size = 0, port = 0;
+            if (sscanf((const char*)buf + 5, "%u %32s %64s %u", &size, update.md5, update.token, &port) == 4) {
+                update.ip = from.sin_addr.s_addr, update.size = size, update.port = (uint16_t)port;
+                update.pending = true;
+            }
+            continue;
+        }
         if (len >= 24 && memcmp(buf, "LMDV", 4) == 0 && buf[4] == 1) {
             xSemaphoreTake(lock, portMAX_DELAY);
             shared.audio.active = buf[5] & 1;
@@ -282,7 +369,6 @@ void netStart(const Scene* s) {
 #endif
 }
 
-void netPause(bool p) { paused = p; }
 uint32_t netSinceBeat() { return millis() - beatMs; }
 uint32_t netSinceSpotify() { return millis() - spotifyMs; }
 

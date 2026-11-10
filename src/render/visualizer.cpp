@@ -6,6 +6,7 @@
 #include "color.h"
 #include "config.h"
 #include "draw.h"
+#include "wordram.h"
 
 namespace {
 
@@ -28,7 +29,11 @@ constexpr int MESH = 8;
 struct Flow {
     int32_t x[MESH + 1][MESH + 1], y[MESH + 1][MESH + 1];
 };
-Flow flowMesh;  // static: too big for the render stack
+// In word-only RAM (all int32): ordinary RAM is short, and it's too big for the render stack.
+Flow& flowMesh() {
+    static Flow* f = (Flow*)wordRam(sizeof(Flow));
+    return *f;
+}
 
 // The frame on screen warped by `f`, softened (blur pulls the bilinear weights toward even:
 // 0 sharp .. 7 soft) and kept at keep / 256; with nothing to feed back from, black. Every
@@ -59,23 +64,22 @@ void feedback(Area& a, bool fed, const Flow& f, int keep, int blur) {
         return value;
     };
     int32_t rowX[MESH + 1], rowY[MESH + 1];  // this row's sources at the mesh columns
+    // Across a row, cell by cell: within one the source steps evenly, so it's two adds a sample.
     auto sampleSpan = [&](uint8_t* out, int x0, int x1) {
         if (x0 >= x1) return;
-        auto at = [&](int x) {
-            const int c = x / CW < MESH ? x / CW : MESH - 1, t = x - c * CW;
-            return sample(rowX[c] + (int32_t)((int64_t)(rowX[c + 1] - rowX[c]) * t / CW),
-                          rowY[c] + (int32_t)((int64_t)(rowY[c + 1] - rowY[c]) * t / CW));
-        };
-        int prev = at(x0);
-        out[x0] = (uint8_t)prev;
-        int x = x0 + 2;
-        for (; x < x1; x += 2) {
-            const int next = at(x);
-            out[x - 1] = (uint8_t)((prev + next) >> 1);
-            out[x] = (uint8_t)next;
-            prev = next;
+        int prev = 0, x = x0;
+        for (int c = x0 / CW; x < x1; c++) {
+            const int cell = c < MESH ? c : MESH - 1, end = (c + 1) * CW < x1 ? (c + 1) * CW : x1;
+            const int32_t sx = (rowX[cell + 1] - rowX[cell]) / CW, sy = (rowY[cell + 1] - rowY[cell]) / CW;
+            int32_t xs = rowX[cell] + sx * (x - cell * CW), ys = rowY[cell] + sy * (x - cell * CW);
+            for (; x < end; x += 2, xs += 2 * sx, ys += 2 * sy) {
+                const int v = sample(xs, ys);
+                if (x > x0) out[x - 1] = (uint8_t)((prev + v) >> 1);
+                out[x] = (uint8_t)v;
+                prev = v;
+            }
         }
-        if (x == x1) out[x1 - 1] = (uint8_t)prev;
+        if ((x1 - x0) % 2 == 0) out[x1 - 1] = (uint8_t)prev;
     };
     auto coverRow = [&](int y) { return y >= a.y0 && y < a.y1; };
     // The stretches of row y off the cover: [from[i], to[i]) for i < the count returned.
@@ -224,6 +228,7 @@ void glow(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
 
     // The flow: out from the middle (sources nearer it), turning more toward the edges, with a
     // ripple running through the pull.
+    Flow& flow = flowMesh();
     const float push = 1 - dt * (0.3f + 1.1f * e + 0.9f * in.beat);
     const float turn = dt * (0.2f + 0.8f * in.mid) * fastSin(s.phase * 0.23f + 1);
     for (int j = 0; j <= MESH; j++)
@@ -233,10 +238,10 @@ void glow(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
             const float z = push * (1 + 0.012f * fastSin(r * 0.08f - s.phase * 3));
             const float th = turn * (0.4f + r / 160);
             const float c = fastCos(th) * z, sn = fastSin(th) * z;
-            flowMesh.x[j][i] = (int32_t)((a.cx + (u * c - v * sn) / K) * 65536);
-            flowMesh.y[j][i] = (int32_t)((a.cy + u * sn + v * c) * 65536);
+            flow.x[j][i] = (int32_t)((a.cx + (u * c - v * sn) / K) * 65536);
+            flow.y[j][i] = (int32_t)((a.cy + u * sn + v * c) * 65536);
         }
-    feedback(a, s.fed, flowMesh, keepFor(dt, 1.2f - 0.5f * e), 1);
+    feedback(a, s.fed, flow, keepFor(dt, 1.2f - 0.5f * e), 1);
 
     const float amp = 16 + 34 * e + 10 * in.beat;
     const int bright = 110 + (int)(90 * e) + (int)(90 * in.beat);
@@ -514,6 +519,16 @@ void laser(Area& a, int ax, int ay, int bx, int by, int level) {
     }
 }
 
+// 1 / sqrt(x) to about 0.2% (one Newton step): sqrtf and division are slow in software here.
+inline float invSqrt(float x) {
+    union {
+        float f;
+        uint32_t i;
+    } u = {x};
+    u.i = 0x5f3759df - (u.i >> 1);
+    return u.f * (1.5f - 0.5f * x * u.f * u.f);
+}
+
 // x - floor(x) without floorf.
 inline float fract(float x) {
     x -= (float)(int)x;
@@ -530,12 +545,13 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     s.phase += dt * (0.6f + 1.8f * e);
     if (s.phase > 6283.0f) s.phase -= 6283.0f;
     const float push = 1 - dt * (0.8f + 1.4f * e);  // sources nearer the middle: everything rushes out
+    Flow& flow = flowMesh();
     for (int j = 0; j <= MESH; j++)
         for (int i = 0; i <= MESH; i++) {
-            flowMesh.x[j][i] = (int32_t)((a.cx + (i * (Canvas::W / MESH) - a.cx) * push) * 65536);
-            flowMesh.y[j][i] = (int32_t)((a.cy + (j * (Canvas::H / MESH) - a.cy) * push) * 65536);
+            flow.x[j][i] = (int32_t)((a.cx + (i * (Canvas::W / MESH) - a.cx) * push) * 65536);
+            flow.y[j][i] = (int32_t)((a.cy + (j * (Canvas::H / MESH) - a.cy) * push) * 65536);
         }
-    feedback(a, s.fed, flowMesh, keepFor(dt, s.step >= 0 && (s.step / 16) % 4 == 0 ? 2.0f : 9.0f - 4.0f * e), 1);  // the tunnel keeps its frames
+    feedback(a, s.fed, flow, keepFor(dt, s.step >= 0 && (s.step / 16) % 4 == 0 ? 2.0f : 9.0f - 4.0f * e), 1);  // the tunnel keeps its frames
 
     // Where we are in the beat: the last kick, and the beat's length from the last two.
     const int n = s.nextBeat;
@@ -628,7 +644,11 @@ inline float fastLog2(float x) {
 // tricorn.
 constexpr int FR = 48, FS = 24;               // rings, spokes
 constexpr float FR_MIN = 60, FR_MAX = 215;    // the rings' radii, px across (x K)
-uint8_t fractalTab[FR][FS];                   // static: too big for the render stack
+// The table, four levels to a word, in word-only RAM (ordinary RAM is short).
+volatile uint32_t* fractalTab() {
+    static volatile uint32_t* t = (volatile uint32_t*)wordRam(FR * FS);
+    return t;
+}
 
 void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     static const float PATHS[4][4][2] = {
@@ -679,7 +699,10 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
         const uint32_t age = ms - s.beats[i];
         if (s.beats[i] && age < 900) ringAt[rings++] = age * (FR / 900.0f);
     }
-    for (int r = 0; r < FR; r++) {
+    volatile uint32_t* tab = fractalTab();
+    uint8_t row[FS];
+    s.parity ^= 1;
+    for (int r = s.parity; r < FR; r += 2) {  // half the rings a frame, as Aleph does
         const float rad = (FR_MIN + (FR_MAX - FR_MIN) * r / (FR - 1)) / FR_MAX * zoom;
         float lift = s.flash * 0.7f;
         for (int i = 0; i < rings; i++) {
@@ -717,24 +740,26 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
                 v = 0.08f + 0.55f * body + line * (0.3f + 0.3f * e) * (0.4f + 0.6f * body);
             }
             v += lift;
-            fractalTab[r][k] = (uint8_t)(v >= 1 ? TOP : v * TOP);
+            row[k] = (uint8_t)(v >= 1 ? TOP : v * TOP);
         }
+        for (int k = 0; k < FS; k += 4) tab[(r * FS + k) >> 2] = row[k] | row[k + 1] << 8 | row[k + 2] << 16 | (uint32_t)row[k + 3] << 24;
     }
     // Each pixel: its ring by distance, its spoke by the angle folded into one thirty-degree wedge.
     fillHalf(a, [&](int x, int y) {
-        const float px = fabsf((x - a.cx) * K), py = fabsf(y - a.cy);
-        const float rr = sqrtf(px * px + py * py);
+        const float px = fabsf((x - a.cx) * K) + 0.01f, py = fabsf(y - a.cy) + 0.01f;
+        const float r2 = px * px + py * py, rr = r2 * invSqrt(r2);
         int r = (int)((rr - FR_MIN) * ((FR - 1) / (FR_MAX - FR_MIN)));
         if (r < 0) r = 0;
         if (r >= FR) return 0;
         const float lo = px < py ? px : py, hi = px < py ? py : px;
-        const float t = hi > 0 ? lo / hi : 0;
+        const float t = lo * invSqrt(hi * hi);
         float ang = t * (0.9724f - 0.1919f * t * t);  // atan, 0..pi/4
         if (py > px) ang = 1.5707963f - ang;
         ang = fract(ang * (1 / 1.0471976f)) * 2;  // in sixty-degree pieces, 0..2, mirrored
         if (ang > 1) ang = 2 - ang;
         const int k = (int)(ang * FS);
-        return (int)fractalTab[r][k < FS ? k : FS - 1];
+        const int i = r * FS + (k < FS ? k : FS - 1);
+        return (int)(tab[i >> 2] >> ((i & 3) * 8)) & 255;
     });
 }
 

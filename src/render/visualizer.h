@@ -33,6 +33,7 @@ struct VizState {
     int mode = 0, lastShape = 0;
     float shapeTime = 0;  // how long the glow has had its wave shape
     int step = -1;        // the rave's last sixteenth
+    int parity = 0;       // which half of the fractal's rings this frame
     uint32_t beats[6] = {};  // when recent beats landed (ms)
     int nextBeat = 0;
     bool beatHeld = false;

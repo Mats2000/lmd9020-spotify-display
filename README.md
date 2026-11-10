@@ -150,9 +150,10 @@ extension or the command-line tool (`brew install platformio`).
    ```
 
    builds the firmware, finds the display by the broadcast it makes every 2 seconds and
-   sends it (or name it: `tools/ota.sh 192.168.1.82`). The picture freezes while the update
-   goes in, then the display restarts into it. macOS may ask once to let Python accept the
-   connection back from the board.
+   asks it to update, signed with the password (sent as a hash, never itself). The display
+   fetches the firmware from the script, checks it and restarts into it (or name it:
+   `tools/ota.sh 192.168.1.82`). It needs the visualizer on (`VISUALIZER 1`, the default).
+   macOS may ask once to let Python accept the connection from the board.
 
 On boot you'll see the clock with status messages underneath ("Connecting
 to Wi-Fi…", "Setting the clock…") until everything is up. Then start

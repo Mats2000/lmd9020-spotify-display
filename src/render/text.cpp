@@ -1,21 +1,25 @@
 #include "text.h"
 
-// Nearest-colour blend, cached.
+#include "wordram.h"
+
+// Nearest-colour blend, cached: 256 entries of two words, (level << 24 | colour) and
+// (1 << 31 | dst << 8 | result), in word-only RAM.
 static uint8_t blendPrecise(uint8_t dst, RGB c, int alpha) {
-    struct Entry {
-        uint64_t key;
-        uint8_t out;
-    };
-    static Entry cache[256];
-    int level = alpha >> 3;  // 33 steps is plenty
-    uint64_t key = ((uint64_t)dst << 40) | ((uint64_t)level << 32) | ((uint64_t)c.r << 16) | (c.g << 8) | c.b;
-    key |= 1ull << 63;  // so an empty slot never matches
-    Entry& e = cache[(dst * 31 + level * 7 + c.r + c.g * 3 + c.b * 5) & 255];
-    if (e.key != key) {
-        e.key = key;
-        e.out = nearestRGB332(lerp(fromRGB332(dst), c, level >= 32 ? 256 : level << 3));
+    static volatile uint32_t* cache = nullptr;
+    if (!cache) {
+        cache = (volatile uint32_t*)wordRam(256 * 8);
+        for (int i = 0; i < 512; i++) cache[i] = 0;  // bit 31 clear: empty
     }
-    return e.out;
+    const int level = alpha >> 3;  // 33 steps is plenty
+    const uint32_t key = (uint32_t)level << 24 | (uint32_t)c.r << 16 | c.g << 8 | c.b;
+    volatile uint32_t* e = cache + 2 * ((dst * 31 + level * 7 + c.r + c.g * 3 + c.b * 5) & 255);
+    const uint32_t tag = 0x80000000u | (uint32_t)dst << 8;
+    const uint32_t second = e[1];
+    if (e[0] == key && (second & 0xFFFFFF00u) == tag) return (uint8_t)second;
+    const uint8_t out = nearestRGB332(lerp(fromRGB332(dst), c, level >= 32 ? 256 : level << 3));
+    e[0] = key;
+    e[1] = tag | out;
+    return out;
 }
 
 static uint32_t nextCodepoint(const char*& s) {

@@ -4,28 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef ARDUINO
-#include <esp_heap_caps.h>
-#endif
+#include "wordram.h"
 
 ArtBuilder::~ArtBuilder() { free((void*)band_); }
 
 void ArtBuilder::allocBand(int rows, int w) {
     free((void*)band_);
     bandStride_ = (w + 1) / 2;
-    const size_t bytes = (size_t)rows * bandStride_ * 4;
-    void* p = nullptr;
-#ifdef ARDUINO
-    // Only IRAM proper (0x4008_0000..0x400A_0000): the rest of the executable heap is ordinary
-    // RAM seen through another address, which would gain nothing.
-    p = heap_caps_malloc(bytes, MALLOC_CAP_EXEC);
-    if (p && ((uintptr_t)p < 0x40080000 || (uintptr_t)p + bytes > 0x400A0000)) {
-        heap_caps_free(p);
-        p = nullptr;
-    }
-#endif
-    if (!p) p = malloc(bytes);
-    band_ = (volatile uint32_t*)p;
+    band_ = (volatile uint32_t*)wordRam((size_t)rows * bandStride_ * 4);
     bandCap_ = band_ ? rows : 0;
 }
 
