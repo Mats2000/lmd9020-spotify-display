@@ -37,6 +37,9 @@ final class Show: ObservableObject {
     let publicAddress = UserDefaults.standard.string(forKey: "relayURL")
     @Published var speakerMs = 0
     @Published var timing = Rig.Timing()
+    // TILES' LEDs in the show (the TILES page).
+    @Published var tiles: TilesLink.Mode { didSet { saveTiles(); rig.tiles.set(tiles) } }
+    @Published var tilesName: String?
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
 
     // The light open on the Lights page, and its look.
@@ -67,6 +70,12 @@ final class Show: ObservableObject {
         lampsOn = d.object(forKey: "lights") as? Bool ?? true
         looks = LookStore.load()
         selected = d.string(forKey: "light")
+        var t = TilesLink.Mode()
+        t.on = d.bool(forKey: "tilesOn")
+        t.animation = TilesLink.Animation(rawValue: d.integer(forKey: "tilesAnimation")) ?? .meter
+        if let c = d.string(forKey: "tilesMain").flatMap(RGB.init(hex:)) { t.main = c }
+        if let c = d.string(forKey: "tilesSecond").flatMap(RGB.init(hex:)) { t.second = c }
+        tiles = t
         trimMs = d.integer(forKey: "trim")
         Sync.trim = Double(d.integer(forKey: "trim")) / 1000
         scenes = venue.scenes
@@ -90,6 +99,7 @@ final class Show: ObservableObject {
         }
         rig.onHeld = { [weak self] id in self?.hold(id) }
         rig.onTiming = { [weak self] t in if self?.timing != t { self?.timing = t } }
+        rig.tiles.set(tiles)
         rig.govee.onFound = { [weak self] in self?.refreshFixtures() }
         watcher.onNewTrack = { [weak self] track, image in
             guard let self else { return }
@@ -170,6 +180,7 @@ final class Show: ObservableObject {
         refreshFixtures()
         wantFrames()
         speakerMs = Int(Sync.speakerDelay * 1000)
+        if tilesName != rig.tiles.name { tilesName = rig.tiles.name }
         openAtLogin = SMAppService.mainApp.status == .enabled
         let r = analyzer.reading
         if needsPermission { status = "Needs permission to record system audio" }
@@ -215,6 +226,14 @@ final class Show: ObservableObject {
                                decode: nil, shouldInterpolate: true, intent: .defaultIntent) {
             preview = NSImage(cgImage: image, size: NSSize(width: 512, height: 384))
         }
+    }
+
+    private func saveTiles() {
+        let d = UserDefaults.standard
+        d.set(tiles.on, forKey: "tilesOn")
+        d.set(tiles.animation.rawValue, forKey: "tilesAnimation")
+        d.set(tiles.main.hex, forKey: "tilesMain")
+        d.set(tiles.second.hex, forKey: "tilesSecond")
     }
 
     // MARK: Phone page

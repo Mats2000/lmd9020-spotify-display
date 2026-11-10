@@ -23,6 +23,8 @@ final class Rig {
 
     let govee = GoveeLamps()
     let matter = MatterLights()
+    let tiles = TilesLink()
+    private let tilesOwn = 0.012  // USB MIDI and one LED chain write
     var onFrames: (([String: [RGB]], [RGB]) -> Void)?  // each light's colours now, and the open look's preview
     var onHeld: ((String) -> Void)?                     // someone else took this light
     var onTiming: ((Timing) -> Void)?
@@ -191,6 +193,7 @@ final class Rig {
             }
             self.guesses.removeAll { abs($0.at - heard) < 0.05 }
             if !covered { self.flashAll(strength, heard: heard) }
+            self.tilesKick(strength, heard: heard)
             self.heardKicks.removeAll { heard - $0 > 8 }
             self.heardKicks.append(heard)
             if period > 0.25 && period < 1.1, let grid = self.fit(period) { self.guessAhead(grid, from: heard) }
@@ -257,6 +260,17 @@ final class Rig {
         guesses.removeAll { $0.at < late }
     }
 
+    // TILES (when the show has its LEDs): the strobe, as close to the kick as its delay allows.
+    private func tilesKick(_ strength: Float, heard: Double) {
+        guard plan.lampsOn, tiles.on else { return }
+        let wait = heard - tilesOwn - Sync.now
+        let send = { [weak self] in
+            guard let self else { return }
+            self.tiles.frame(kick: max(0.05, strength), level: self.energy, bands: self.analyzer.reading.bands)
+        }
+        if wait <= 0.003 { send() } else { queue.asyncAfter(deadline: .now() + wait, execute: send) }
+    }
+
     // A kick heard at `heard`: each light flashed as close to it as its own delay allows.
     private func flashAll(_ strength: Float, heard: Double) {
         guard plan.lampsOn else { return }
@@ -303,6 +317,7 @@ final class Rig {
         queue.async {
             self.preview.accent(strength)
             for f in self.plan.fixtures where self.driving.contains(f.id) && f.settings.kick > 0 { self.engine(for: f).accent(strength) }
+            self.tiles.noteAccent(strength)
         }
     }
 
@@ -368,6 +383,10 @@ final class Rig {
             }
         }
         expireGuesses()
+        // TILES: a frame each tick while the music plays (and the ten quiet seconds after).
+        if plan.lampsOn && (r.playing || quietFor < 10) {
+            tiles.frame(kick: 0, level: energy, bands: r.bands)
+        }
         if now.timeIntervalSince(statusAt) > 3 {  // has anyone else taken a lamp?
             statusAt = now
             govee.checkStatus()

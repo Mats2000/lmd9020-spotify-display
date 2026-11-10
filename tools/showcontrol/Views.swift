@@ -14,7 +14,7 @@ struct RootView: View {
                 case .display: DisplayPage(show: show)
                 case .lights: LightsPage(show: show)
                 case .scenes: ScenesPage(show: show)
-                case .tiles: SoonPage(title: "TILES", text: "Pads that call up looks, and TILES' own lights as part of the show.")
+                case .tiles: TilesPage(show: show)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -34,7 +34,7 @@ struct Sidebar: View {
             }
             .padding(.top, 44).padding(.bottom, 32)
             ForEach(Show.Page.allCases, id: \.self) { p in
-                let soon = p == .tiles
+                let soon = false
                 ListRow(title: p.rawValue, chosen: show.page == p, trailing: {
                     if soon { Text("soon").font(.sora(10.5)).foregroundColor(Sentia.ink2.opacity(0.7)) }
                 }) { show.page = p }
@@ -470,6 +470,7 @@ struct LampDrawing: View {
 // drag), its × (on hover) to remove it, + to add one (up to six) and change it straight away.
 struct Swatches: View {
     @Binding var colours: [RGB]
+    var fixed = false  // a set number of colours: no adding or removing
     var edited: () -> Void = {}  // a colour was chosen: the look uses its own colours from now on
     @State private var hovered: Int?
     @State private var editing: Int?
@@ -493,7 +494,7 @@ struct Swatches: View {
                 }
                 .buttonStyle(.plain)
                 .overlay(alignment: .topTrailing) {
-                    if colours.count > 1 && hovered == i {
+                    if !fixed && colours.count > 1 && hovered == i {
                         Button {
                             if editing == i { ColourPanel.shared.close(); editing = nil }
                             colours.remove(at: i)
@@ -505,9 +506,9 @@ struct Swatches: View {
                     }
                 }
                 .onHover { hovered = $0 ? i : (hovered == i ? nil : hovered) }
-                .contextMenu { if colours.count > 1 { Button("Remove") { colours.remove(at: i); edited() } } }
+                .contextMenu { if !fixed && colours.count > 1 { Button("Remove") { colours.remove(at: i); edited() } } }
             }
-            if colours.count < 6 {
+            if !fixed && colours.count < 6 {
                 Button {
                     colours.append((colours.last ?? RGB(255, 0, 255)).turned(by: 60))
                     edited()
@@ -559,6 +560,71 @@ extension RGB {
         if c > 0 { h = mx == r ? ((g - b) / c).truncatingRemainder(dividingBy: 6) : mx == g ? (b - r) / c + 2 : (r - g) / c + 4 }
         h = (h * 60 + degrees + 720).truncatingRemainder(dividingBy: 360)
         return RGB(hue: h, saturation: mx > 0 && c > 0 ? c / mx : 1, value: max(mx, 0.6))
+    }
+}
+
+// MARK: - TILES
+
+// TILES' LEDs as part of the show: while on, its underglow strobes on the kicks and the pads play
+// one of four animations from the music (TilesLink, and the firmware's show link).
+struct TilesPage: View {
+    @ObservedObject var show: Show
+
+    static let animations: [(TilesLink.Animation, String, String)] = [
+        (.meter, "Meter", "Each column a level bar from its part of the sound, bass on the left, like the TILES screensaver."),
+        (.pulse, "Pulse", "The whole grid flashes the main colour on each kick, over a dim bed of the second."),
+        (.ripple, "Ripple", "A ring spreads from the centre on each kick."),
+        (.sparkle, "Sparkle", "Pads spark in the second colour on snares and hats; kicks wash the grid in the main colour."),
+    ]
+
+    private var colours: Binding<[RGB]> {
+        Binding(get: { [show.tiles.main, show.tiles.second] },
+                set: { c in
+                    var t = show.tiles
+                    if c.count > 0 { t.main = c[0] }
+                    if c.count > 1 { t.second = c[1] }
+                    show.tiles = t
+                })
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .lastTextBaseline) {
+                    PageHeader(title: "TILES")
+                    Spacer()
+                    SentiaToggle(title: show.tiles.on ? "TILES' lights are the show's" : "Take over TILES' lights",
+                                 on: Binding(get: { show.tiles.on }, set: { v in var t = show.tiles; t.on = v; show.tiles = t }))
+                }
+                Text(show.tilesName.map { "\($0) connected." } ?? "No TILES connected: plug one in by USB.")
+                    .font(.soraLight(12)).foregroundColor(Sentia.ink2).padding(.bottom, 28)
+                VStack(alignment: .leading, spacing: 30) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionLabel(text: "Pads")
+                        HStack(spacing: 8) {
+                            ForEach(Self.animations, id: \.0) { a in
+                                Chip(title: a.1, chosen: show.tiles.animation == a.0) { var t = show.tiles; t.animation = a.0; show.tiles = t }
+                            }
+                        }
+                        Text(Self.animations.first { $0.0 == show.tiles.animation }?.2 ?? "")
+                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionLabel(text: "Colours (main, second)")
+                        Swatches(colours: colours, fixed: true)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        SectionLabel(text: "Underglow")
+                        Text("A white strobe on each kick, falling toward the main colour.").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                    }
+                    Text("Only while the music plays. TILES goes back to its own lights two seconds after the show stops; its pads still play notes underneath.")
+                        .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading)
+                }
+                .frame(maxWidth: 560, alignment: .leading)
+                .padding(.bottom, 40)
+            }
+            .padding(.horizontal, 40)
+        }
     }
 }
 
