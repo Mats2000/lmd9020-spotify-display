@@ -56,16 +56,32 @@ switch (command) {
     }
     case "serve": {
         await controller.start();
+        // macOS refuses a new process's first sends to the home network ("host unreachable") until
+        // its Local Network permission is checked, and matter.js then waits two minutes to try again:
+        // each light's address is sent a throwaway packet (the discard port) until one goes through.
+        const reach = async peer => {
+            for (const a of peer.state.commissioning?.addresses ?? []) {
+                if (!a.ip?.includes(":")) continue;
+                const sock = dgram.createSocket("udp6");
+                for (let i = 0; i < 20; i++) {
+                    const ok = await new Promise(r => sock.send(Buffer.from([0]), 9, a.ip, e => r(!e)));
+                    if (ok) break;
+                    await new Promise(r => setTimeout(r, 250));
+                }
+                sock.close();
+            }
+        };
         const all = new Map();  // id -> one light's part and show state
         for (const peer of lights()) {
+            await reach(peer);
             await peer.start();
-            all.set(peer.id, { part: lightPart(peer), busy: false, next: null, after: null, saved: null, driving: false, released: false, trip: 0 });
+            all.set(peer.id, { part: lightPart(peer), busy: false, next: null, saved: null, driving: false, released: false, trip: 0 });
             console.log(`Ready: ${peer.id}`);
         }
         const targets = cmd => cmd.id ? [all.get(cmd.id)].filter(Boolean) : [...all.values()];
 
-        // One command at a time per light, so they can't pile up in the bulb: while one is under way
-        // only the latest waits (a kick wins over a level, and the level waits behind it).
+        // Colours and levels go one at a time per light, so they can't pile up in the bulb: while one
+        // is under way only the latest waits. Kicks (below) skip the line.
         const timed = async (light, run) => {
             const t = Date.now();
             await run();
@@ -92,19 +108,31 @@ switch (command) {
                 console.error(`${e}`);
             }
             light.busy = false;
-            const n = light.next ?? light.after;
-            if (n === light.next) light.next = light.after, light.after = null;
-            else light.after = null;
+            const n = light.next;  // only the latest waiting command: late ones are stale
+            light.next = null;
             if (n && light.driving) apply(light, n);
-            else light.next = light.after = null;
         };
         const queue = (light, cmd) => {
             if (!light.busy) return apply(light, cmd);
-            if (cmd.kick) {
-                if (light.next && !light.next.kick) light.after = light.next;
-                light.next = cmd;
-            } else if (light.next?.kick) light.after = cmd;
-            else light.next = cmd;
+            light.next = cmd;
+        };
+        // A kick never waits: straight up (no fade), then down to `then` as soon as the bulb has it,
+        // so the flash lasts one round trip. A newer kick takes over the fall.
+        const kick = async (light, cmd) => {
+            const part = light.part;
+            if (part.stateOf(LevelControlClient) === undefined) return;
+            const gen = light.kicks = (light.kicks ?? 0) + 1;
+            const level = v => Math.max(1, Math.min(254, Math.round(v * 254)));
+            const opts = { optionsMask: {}, optionsOverride: {} };
+            try {
+                await timed(light, () => part.commandsOf(LevelControlClient).moveToLevelWithOnOff({ level: level(cmd.level), transitionTime: 0, ...opts }));
+                if (cmd.then === undefined || gen !== light.kicks || !light.driving) return;
+                await part.commandsOf(LevelControlClient).moveToLevelWithOnOff({
+                    level: level(cmd.then), transitionTime: Math.round((cmd.fall ?? 0.15) * 10), ...opts,
+                });
+            } catch (e) {
+                console.error(`${e}`);
+            }
         };
         setInterval(() => {
             for (const [id, light] of all) if (light.trip) console.log(`Lag: ${id} ${Math.round(light.trip)}`);
@@ -124,7 +152,7 @@ switch (command) {
         };
         const restore = async light => {
             light.driving = false;
-            light.next = light.after = null;
+            light.next = null;
             const s = light.saved;
             light.saved = null;
             if (!s || light.released) return;
@@ -145,7 +173,7 @@ switch (command) {
             light.released = true;
             light.driving = false;
             light.saved = null;  // the light is someone else's now: nothing to put back
-            light.next = light.after = null;
+            light.next = null;
             console.log(`Released: ${id} ${why}`);
         };
 
@@ -183,6 +211,7 @@ switch (command) {
                     if (light.released) console.log(`Taken: ${id}`);
                     light.released = false;
                 } else if (!light.driving || light.released) continue;  // nothing drives a light outside its show
+                else if (cmd.kick) kick(light, cmd);
                 else queue(light, cmd);
             }
         });

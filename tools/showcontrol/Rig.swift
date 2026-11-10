@@ -1,6 +1,6 @@
 // The rig: every light in the show, each driven by its own engine and look, 30 times a second
-// on its own queue. Kicks are timed to when they're heard: once the beat is steady, the next one
-// is sent ahead by each light's own delay, so even a slow bulb lands on it. A light someone else
+// on its own queue. Kicks are timed to when they're heard; for a light too slow for that, once the
+// kick pattern repeats, the next ones are sent ahead by its own delay so it lands on them too. A light someone else
 // takes (Alexa turns it off, a routine changes it) is let go and left alone until it's taken back.
 
 import Foundation
@@ -13,8 +13,10 @@ final class Rig {
         var lampsOn = true
     }
     struct Timing: Equatable {
-        var captureMs = 0, lateMs = 0
-        var ahead = false  // kicks sent ahead on the beat
+        var captureMs = 0, bufferMs = 0
+        var lampMs = 0, bulbMs = 0  // how late kicks reach each kind of light, its own delay included
+        var ahead = false           // kicks sent ahead, from the pattern
+        var hitPercent = 0          // how many guessed kicks came true lately
     }
 
     let govee = GoveeLamps()
@@ -37,11 +39,26 @@ final class Rig {
     private var energy = 0.0, quietFor = 0.0, lastTick = Date(), statusAt = Date(), timingAt = Date()
     private var live: [String: [RGB]] = [:]
 
-    // The beat: the last kick heard, how many in a row fell on the beat, the one sent ahead.
-    private var lastHeard = 0.0, streak = 0, ahead: Double?, aheadGen = 0, lastStrength: Float = 0.8
-    private var late = 0.0
+    // Kicks ahead, for the lights too slow to keep up (a Matter bulb): a beat grid is fitted through
+    // the last 8 s of kicks (which averages out their few tens of ms of wobble), and each sixteenth
+    // of it that had a kick in both of the last two bars is guessed to have one again. Guesses are
+    // scored as they come true or not, and sent only while most do.
+    private struct Guess { var at: Double; var sent: Bool; var id: Int }
+    private var heardKicks: [Double] = [], guesses: [Guess] = [], guessID = 0
+    private var hits = 0.0, scored = 0, lastStrength: Float = 0.8
+    private var lateLamp = 0.0, lateBulb = 0.0, lastKickFrame = Date.distantPast
+    private var sendingAhead: Bool { scored >= 8 && hits >= 0.7 }
+    private func slow(_ f: Fixture) -> Bool { own(f) > 0.06 }
 
     private let goveeOwn = 0.03
+    // `defaults write com.sentiainstruments.lmd-visualizer logKicks -bool true`: every kick to
+    // ~/Library/Logs/Show Control/kicks.log (heard, period, strength, found at), to study the timing.
+    private lazy var kickLog: FileHandle? = {
+        guard UserDefaults.standard.bool(forKey: "logKicks") else { return nil }
+        let url = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Show Control/kicks.log")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        return try? FileHandle(forWritingTo: url)
+    }()
 
     init(analyzer: Analyzer) {
         self.analyzer = analyzer
@@ -104,9 +121,12 @@ final class Rig {
         return e
     }
 
+    // A bulb between kicks: the loudness takes it under half way up the rhythm, so a kick always
+    // stands out; a kick over 100% darkens it further, for a strobe.
     private func level(_ f: Fixture) -> Double {
-        let l = f.settings.look
-        return (Double(l.rhythmLow) + Double(l.rhythmHigh - l.rhythmLow) * min(1, energy * 1.2)) / 100 * Double(f.settings.brightness) / 100
+        let l = f.settings.look, k = Double(f.settings.kick) / 100
+        let base = (Double(l.rhythmLow) + Double(l.rhythmHigh - l.rhythmLow) * 0.45 * min(1, energy * 1.5)) / 100
+        return base * Double(f.settings.brightness) / 100 * (k > 1 ? max(0.15, 1 - (k - 1) * 1.4) : 1)
     }
 
     // MARK: Kicks
@@ -116,50 +136,87 @@ final class Rig {
         queue.async {
             self.preview.kick(strength)
             let heard = Sync.heard(played)
-            let steady = period > 0.3 && period < 1.0
-            if steady && self.lastHeard > 0 {
-                let gap = heard - self.lastHeard, beats = (gap / period).rounded()
-                self.streak = beats >= 1 && beats <= 2 && abs(gap - beats * period) < period * 0.08 ? self.streak + 1 : 0
-            } else {
-                self.streak = 0
-            }
-            self.lastHeard = heard
+            self.kickLog?.write(Data(String(format: "%.4f %.4f %.3f %.4f\n", heard, period, strength, Sync.now).utf8))
             self.lastStrength = strength
-            // Already sent ahead for this beat?
-            let covered = self.ahead.map { abs($0 - heard) < max(0.06, period * 0.12) } ?? false
-            self.ahead = nil
-            if !covered { self.flashAll(strength, heard: heard) }
-            if steady && self.streak >= 3 { self.sendAhead(heard + period, period: period) }
+            var covered = false  // the slow lights already had it
+            for g in self.guesses where abs(g.at - heard) < 0.05 {
+                covered = covered || g.sent
+                self.score(true)
+            }
+            self.guesses.removeAll { abs($0.at - heard) < 0.05 }
+            self.flashAll(strength, heard: heard, skipSlow: covered)
+            self.heardKicks.removeAll { heard - $0 > 8 }
+            self.heardKicks.append(heard)
+            if period > 0.25 && period < 1.1, let grid = self.fit(period) { self.guessAhead(grid, from: heard) }
         }
     }
 
-    // The next beat, sent to each light its own delay early. If no kick comes for it, the run is over.
-    private func sendAhead(_ heard: Double, period: Double) {
-        aheadGen += 1
-        let gen = aheadGen
-        ahead = heard
-        for f in plan.fixtures where driving.contains(f.id) {
-            let wait = heard - own(f) - Sync.now
-            guard wait > 0.005 else { continue }
-            let id = f.id
-            queue.asyncAfter(deadline: .now() + wait) { [weak self] in
-                guard let self, self.aheadGen == gen, let f = self.plan.fixtures.first(where: { $0.id == id }), self.driving.contains(id) else { return }
-                self.flash(f, self.lastStrength)
+    // The beat grid (a beat's time and the period) through the kicks near its beats, by least squares.
+    private func fit(_ seed: Double) -> (t0: Double, period: Double)? {
+        guard heardKicks.count >= 6, let last = heardKicks.last else { return nil }
+        var t0 = last, p = seed
+        for _ in 0..<3 {
+            var n = 0.0, sk = 0.0, st = 0.0, skk = 0.0, skt = 0.0
+            for t in heardKicks {
+                let k = ((t - t0) / p).rounded()
+                guard abs(t - t0 - k * p) < p * 0.15 else { continue }
+                n += 1; sk += k; st += t; skk += k * k; skt += k * t
+            }
+            let v = n * skk - sk * sk
+            guard n >= 4, v > 0 else { return nil }
+            p = (n * skt - sk * st) / v
+            t0 = (st - p * sk) / n
+            guard p > 0.25 && p < 1.1 else { return nil }
+        }
+        return (t0, p)
+    }
+
+    // The next half second's sixteenths where both bars before had a kick.
+    private func guessAhead(_ grid: (t0: Double, period: Double), from heard: Double) {
+        let step = grid.period / 4
+        func kicked(_ t: Double) -> Bool { heardKicks.contains { abs($0 - t) < 0.05 } }
+        var s = ((heard - grid.t0) / step).rounded(.down) + 1
+        while true {
+            let at = grid.t0 + s * step
+            s += 1
+            if at <= heard + 0.03 { continue }
+            if at > heard + 0.6 { break }
+            guard kicked(at - 16 * step) && kicked(at - 32 * step), !guesses.contains(where: { abs($0.at - at) < 0.03 }) else { continue }
+            guessID += 1
+            let g = Guess(at: at, sent: sendingAhead && plan.lampsOn, id: guessID)
+            guesses.append(g)
+            guard g.sent else { continue }
+            for f in plan.fixtures where driving.contains(f.id) && slow(f) {
+                let wait = at - own(f) - Sync.now
+                guard wait > 0.005 else { continue }
+                let id = f.id
+                queue.asyncAfter(deadline: .now() + wait) { [weak self] in
+                    guard let self, self.guesses.contains(where: { $0.id == g.id }),
+                          let f = self.plan.fixtures.first(where: { $0.id == id }), self.driving.contains(id) else { return }
+                    self.flash(f, self.lastStrength)
+                }
             }
         }
-        queue.asyncAfter(deadline: .now() + max(0, heard - Sync.now) + period * 0.3) { [weak self] in
-            guard let self, self.aheadGen == gen, self.ahead == heard else { return }
-            self.ahead = nil  // nothing came: wait for a new run before sending ahead again
-            self.streak = 0
-        }
+    }
+
+    private func score(_ hit: Bool) {
+        scored += 1
+        hits += ((hit ? 1 : 0) - hits) * 0.1
+    }
+
+    // Guesses no kick came for (allowing for the time a kick takes to be found).
+    private func expireGuesses() {
+        let late = Sync.now - 0.12
+        for g in guesses where g.at < late { score(false) }
+        guesses.removeAll { $0.at < late }
     }
 
     // A kick heard at `heard`: each light flashed as close to it as its own delay allows.
-    private func flashAll(_ strength: Float, heard: Double) {
+    private func flashAll(_ strength: Float, heard: Double, skipSlow: Bool) {
         guard plan.lampsOn else { return }
-        for f in plan.fixtures where driving.contains(f.id) {
+        for f in plan.fixtures where driving.contains(f.id) && !(skipSlow && slow(f)) {
             let wait = heard - own(f) - Sync.now
-            late += (max(0, -wait) - late) * 0.2
+            if f.kind == .govee { lateLamp += (max(0, -wait) - lateLamp) * 0.2 } else { lateBulb += (max(0, -wait) - lateBulb) * 0.2 }
             let id = f.id
             let work = { [weak self] in
                 guard let self, let f = self.plan.fixtures.first(where: { $0.id == id }), self.driving.contains(id) else { return }
@@ -176,18 +233,14 @@ final class Rig {
         kickedAt[f.id] = Date()
         switch f.kind {
         case .govee:
+            lastKickFrame = Date()
             send(f, e.frame(dt: 0, energy: energy))
         case .matter:
             guard amount > 0 else { return }
-            let l = f.settings.look, k = Double(f.settings.brightness) / 100
-            let base = level(f), top = Double(l.rhythmHigh) / 100 * k
-            let high = min(1, base + (top - base) * min(1, amount) + (amount > 1 ? (1 - top) * (amount - 1) : 0))
-            let id = f.address
-            matter.kick(id, level: high)
-            queue.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-                self?.matterLevel[f.id] = base
-                self?.matter.level(id, base, fade: 0.3)
-            }
+            let l = f.settings.look, top = Double(l.rhythmHigh) / 100 * Double(f.settings.brightness) / 100
+            let base = level(f), high = min(1, base + (top - base) * min(1, amount))
+            matter.kick(f.address, level: high, then: base, fall: amount > 1 ? 0.05 : 0.2)
+            matterLevel[f.id] = base
             live[f.id] = [(matterColour[f.id] ?? .black).scaled(high)]
         }
     }
@@ -251,18 +304,23 @@ final class Rig {
             switch f.kind {
             case .govee:
                 let frame = e.frame(dt: dt, energy: energy)
+                // Right after a kick's own frame, this one waits: more than the lamp takes would queue in it.
+                guard now.timeIntervalSince(lastKickFrame) > 0.025 else { continue }
                 Sync.later(own: goveeOwn) { [weak self] in self?.send(f, frame) }
             case .matter:
                 tickMatter(f, e, now: now, dt: dt)
             }
         }
+        expireGuesses()
         if now.timeIntervalSince(statusAt) > 3 {  // has anyone else taken a lamp?
             statusAt = now
             govee.checkStatus()
         }
         if now.timeIntervalSince(timingAt) > 1 {
             timingAt = now
-            let t = Timing(captureMs: Int(Sync.captureLag * 1000), lateMs: Int(late * 1000), ahead: streak >= 3)
+            let t = Timing(captureMs: Int(Sync.captureLag * 1000), bufferMs: Int(Sync.bufferLength * 1000),
+                           lampMs: Int(lateLamp * 1000), bulbMs: Int(lateBulb * 1000), ahead: sendingAhead,
+                           hitPercent: Int(hits * 100))
             DispatchQueue.main.async { self.onTiming?(t) }
         }
         if wantsFrames {
@@ -282,12 +340,10 @@ final class Rig {
             lastStep[f.id] = step
             let colours = e.palette.isEmpty ? [RGB(255, 236, 210)] : e.palette
             let c = l.random ? colours.randomElement()! : colours[step % colours.count]
+            if c != matterColour[f.id] { matter.colour(id, c, fade: l.speed >= 4 ? 0 : 0.2) }
             matterColour[f.id] = c
-            matter.colour(id, c, level: base, fade: l.speed >= 4 ? 0 : 0.2)
-            matterLevel[f.id] = base
-            levelAt[f.id] = now
-        } else if now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.25,
-                  now.timeIntervalSince(kickedAt[f.id] ?? .distantPast) > 0.45,
+        } else if now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.3,
+                  now.timeIntervalSince(kickedAt[f.id] ?? .distantPast) > 1.0,  // the kicks set it meanwhile
                   abs(base - (matterLevel[f.id] ?? -1)) > 0.03 {
             levelAt[f.id] = now
             matterLevel[f.id] = base

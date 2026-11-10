@@ -281,9 +281,14 @@ seconds, so offbeat bass notes and noise don't count; snares and hats come throu
 accents (extra sparkle, never the pulse). Every sound is timed by when Spotify played it (the
 capture's own timestamps), so a light flashes when the kick is *heard*: after the speakers' delay
 (Core Audio's figure plus "In time with the speakers"), less the light's own delay (30 ms for a
-Govee lamp, half the measured round trip for a Matter light). Once three kicks in a row fall on the
-beat, the next one is sent ahead, each light its own delay early, so even a slow bulb lands on it;
-a beat with no kick ends the run after one flash. The Lights page shows the measured delays.
+Govee lamp, half the measured round trip for a Matter light). A light too slow for that (a Matter
+bulb takes 100-160 ms a command) gets kicks ahead: a beat grid is fitted through the last 8 s of
+kicks, each sixteenth that had a kick in both of the last two bars is guessed to have one again,
+and the guesses are sent its own delay early once 70% of them come true. A bulb kick goes straight
+up and falls back as soon as the bulb has it, and between kicks the bulb sits under half way up
+its rhythm (darker still with the kick over 100%), so the flash shows. The Lights page shows the
+measured delays. `defaults write com.sentiainstruments.lmd-visualizer logKicks -bool true` logs
+every kick to `~/Library/Logs/Show Control/kicks.log` for study.
 
 ```sh
 .venv/bin/python tools/showcontrol/make_icon.py   # only after changing the icon

@@ -417,6 +417,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         let lag = now - pts - length
         let played = pts.isFinite && lag > -0.05 && lag < 1.5 ? pts : now - length
         if played == pts { Sync.captureLag += (max(0, lag) - Sync.captureLag) * 0.05 }
+        Sync.bufferLength += (length - Sync.bufferLength) * 0.05
         analyzer.push(mono, rate: asbd.mSampleRate, played: played)
     }
 

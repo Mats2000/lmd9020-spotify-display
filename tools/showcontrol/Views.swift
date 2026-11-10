@@ -188,9 +188,11 @@ struct LightsPage: View {
 
     private var timingText: String {
         let t = show.timing
-        let hear = "The music reaches the app \(t.captureMs) ms after Spotify plays it, the speakers add \(show.speakerMs) ms."
-        if t.ahead { return hear + " The beat is steady: kicks go out ahead, each light by its own delay, to land on it." }
-        return hear + (t.lateMs > 5 ? " Kicks land \(t.lateMs) ms late until the beat is steady." : " Kicks land on time.")
+        var text = "The music reaches the app \(t.captureMs) ms after Spotify plays it, in pieces of \(t.bufferMs) ms; the speakers add \(show.speakerMs) ms."
+        text += " Kicks reach the lamp \(t.lampMs) ms after you hear them."
+        guard show.fixtures.contains(where: { $0.kind == .matter }) else { return text }
+        if t.ahead { return text + " The kicks repeat (\(t.hitPercent)% guessed right), so the bulb gets them ahead, to land as you hear them." }
+        return text + " The bulb \(t.bulbMs) ms; it gets them ahead once 70% of the pattern is guessed right (now \(t.hitPercent)%)."
     }
 
     @ViewBuilder private func panel(_ f: Fixture) -> some View {

@@ -93,6 +93,7 @@ enum Sync {
 
     // How long the captured sound takes to reach the app (measured on every buffer).
     static var captureLag = 0.0
+    static var bufferLength = 0.0  // each captured buffer's length: a sound can wait up to this long in it
     // The clock capture timestamps are on, in seconds.
     static var now: Double { CMClockGetTime(CMClockGetHostTimeClock()).seconds }
 

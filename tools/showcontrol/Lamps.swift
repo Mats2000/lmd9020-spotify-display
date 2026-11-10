@@ -158,7 +158,7 @@ final class LampEngine {
 
     // One frame: dt seconds since the last, energy 0...1 (the music's loudness).
     func frame(dt: Double, energy: Double) -> [RGB] {
-        flash *= exp(-dt * 6)
+        flash *= exp(-dt * 11)  // a sharp fall: the kick reads as a hit, not a swell
         phase += dt * speed
         let n = span
         var line = [RGB](repeating: .black, count: n)
@@ -510,11 +510,12 @@ final class MatterLights {
         }
     }
 
-    func colour(_ id: String, _ c: RGB, level: Double, fade: Double) {
-        send(["id": id, "r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "level": level, "fade": fade])
-    }
+    func colour(_ id: String, _ c: RGB, fade: Double) { send(["id": id, "r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "fade": fade]) }
     func level(_ id: String, _ level: Double, fade: Double) { send(["id": id, "level": level, "fade": fade]) }
-    func kick(_ id: String, level: Double) { send(["id": id, "level": level, "fade": 0, "kick": true]) }
+    // Straight to `level`, then down to `then` over `fall` seconds as soon as the light has it.
+    func kick(_ id: String, level: Double, then: Double, fall: Double) {
+        send(["id": id, "level": level, "then": then, "fall": fall, "kick": true])
+    }
     func save(_ id: String) { send(["id": id, "save": true]) }
     func restore(_ id: String) { send(["id": id, "restore": true]) }
     func release(_ id: String) { send(["id": id, "release": true]) }
