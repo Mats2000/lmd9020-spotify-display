@@ -566,62 +566,105 @@ extension RGB {
 // MARK: - TILES
 
 // TILES' LEDs as part of the show: while on, its underglow strobes on the kicks and the pads play
-// one of four animations from the music (TilesLink, and the firmware's show link).
+// an animation from the music (TilesLink, and the firmware's show link).
 struct TilesPage: View {
     @ObservedObject var show: Show
 
     static let animations: [(TilesLink.Animation, String, String)] = [
         (.meter, "Meter", "Each column a level bar from its part of the sound, bass on the left, like the TILES screensaver."),
+        (.spectrum, "Spectrum", "The meter's bars coloured across the grid, main colour to second, peaks in the accent."),
         (.pulse, "Pulse", "The whole grid flashes the main colour on each kick, over a dim bed of the second."),
         (.ripple, "Ripple", "A ring spreads from the centre on each kick."),
-        (.sparkle, "Sparkle", "Pads spark in the second colour on snares and hats; kicks wash the grid in the main colour."),
+        (.rain, "Rain", "Drops fall from the top row: kicks in the main colour, snares and hats in the accent."),
+        (.chase, "Chase", "A lit column steps across the grid on each kick, its trail fading."),
+        (.sparkle, "Sparkle", "Pads spark in the accent colour on snares and hats; kicks wash the grid in the main colour."),
     ]
+    static let glows: [(TilesLink.Glow, String)] = [(.white, "White"), (.main, "Main"), (.second, "Second"), (.off, "Off")]
 
+    private func set(_ change: (inout TilesLink.Mode) -> Void) {
+        var t = show.tiles
+        change(&t)
+        show.tiles = t
+    }
+    private func int(_ kp: WritableKeyPath<TilesLink.Mode, Int>) -> Binding<Int> {
+        Binding(get: { show.tiles[keyPath: kp] }, set: { v in set { $0[keyPath: kp] = v } })
+    }
     private var colours: Binding<[RGB]> {
-        Binding(get: { [show.tiles.main, show.tiles.second] },
-                set: { c in
-                    var t = show.tiles
+        Binding(get: { [show.tiles.main, show.tiles.second, show.tiles.accent] },
+                set: { c in set { t in
                     if c.count > 0 { t.main = c[0] }
                     if c.count > 1 { t.second = c[1] }
-                    show.tiles = t
-                })
+                    if c.count > 2 { t.accent = c[2] }
+                } })
     }
 
     var body: some View {
+        let t = show.tiles, a = t.animation
+        let meterLike = a == .meter || a == .spectrum, moving = a == .ripple || a == .rain || a == .chase
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .lastTextBaseline) {
                     PageHeader(title: "TILES")
                     Spacer()
-                    SentiaToggle(title: show.tiles.on ? "TILES' lights are the show's" : "Take over TILES' lights",
-                                 on: Binding(get: { show.tiles.on }, set: { v in var t = show.tiles; t.on = v; show.tiles = t }))
+                    SentiaToggle(title: t.on ? "TILES' lights are the show's" : "Take over TILES' lights",
+                                 on: Binding(get: { show.tiles.on }, set: { v in set { $0.on = v } }))
                 }
                 Text(show.tilesName.map { "\($0) connected." } ?? "No TILES connected: plug one in by USB.")
                     .font(.soraLight(12)).foregroundColor(Sentia.ink2).padding(.bottom, 28)
-                VStack(alignment: .leading, spacing: 30) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionLabel(text: "Pads")
-                        HStack(spacing: 8) {
-                            ForEach(Self.animations, id: \.0) { a in
-                                Chip(title: a.1, chosen: show.tiles.animation == a.0) { var t = show.tiles; t.animation = a.0; show.tiles = t }
+                HStack(alignment: .top, spacing: 48) {
+                    VStack(alignment: .leading, spacing: 30) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionLabel(text: "Pads")
+                            LazyVGrid(columns: Array(repeating: GridItem(.fixed(112), spacing: 8), count: 4), alignment: .leading, spacing: 8) {
+                                ForEach(Self.animations, id: \.0) { an in
+                                    Chip(title: an.1, chosen: a == an.0, width: 112) { set { $0.animation = an.0 } }
+                                }
+                            }
+                            Text(Self.animations.first { $0.0 == a }?.2 ?? "").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                        }
+                        VStack(alignment: .leading, spacing: 26) {
+                            SentiaSlider(label: "Brightness", low: .constant(0), high: int(\.brightness), bounds: 0...100, range: false, unit: "%")
+                            SentiaSlider(label: "Tail", low: .constant(0), high: int(\.tail), bounds: 0...100, range: false)
+                            SentiaSlider(label: "Background", low: .constant(0), high: int(\.bed), bounds: 0...100, range: false)
+                            if meterLike {
+                                SentiaSlider(label: "Sensitivity", low: .constant(0), high: int(\.sensitivity), bounds: 0...100, range: false)
+                            }
+                            if moving {
+                                SentiaSlider(label: "Speed", low: .constant(0), high: int(\.speed), bounds: 0...100, range: false)
                             }
                         }
-                        Text(Self.animations.first { $0.0 == show.tiles.animation }?.2 ?? "")
-                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                        if a == .meter {
+                            HStack(spacing: 8) {
+                                Chip(title: "White, yellow, red", chosen: !t.meterColours) { set { $0.meterColours = false } }
+                                Chip(title: "My colours", chosen: t.meterColours) { set { $0.meterColours = true } }
+                            }
+                        }
                     }
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionLabel(text: "Colours (main, second)")
-                        Swatches(colours: colours, fixed: true)
+                    .frame(maxWidth: 500, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 30) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionLabel(text: "Colours")
+                            Swatches(colours: colours, fixed: true)
+                            Text("Main, second, accent.").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                        }
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionLabel(text: "Underglow")
+                            HStack(spacing: 8) {
+                                ForEach(Self.glows, id: \.0) { g in
+                                    Chip(title: g.1, chosen: t.glow == g.0) { set { $0.glow = g.0 } }
+                                }
+                            }
+                            if t.glow != .off {
+                                SentiaSlider(label: "Strobe length", low: .constant(0), high: int(\.strobe), bounds: 0...100, range: false)
+                            }
+                            Text(t.glow == .white ? "A white strobe on each kick, falling toward the main colour." : t.glow == .off ? "Dark." : "A strobe in that colour on each kick.")
+                                .font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                        }
                     }
-                    VStack(alignment: .leading, spacing: 6) {
-                        SectionLabel(text: "Underglow")
-                        Text("A white strobe on each kick, falling toward the main colour.").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
-                    }
-                    Text("Only while the music plays. TILES goes back to its own lights two seconds after the show stops; its pads still play notes underneath.")
-                        .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading)
+                    .frame(width: 360, alignment: .leading)
                 }
-                .frame(maxWidth: 560, alignment: .leading)
-                .padding(.bottom, 40)
+                Text("Only while the music plays. TILES goes back to its own lights two seconds after the show stops; its pads still play notes underneath.")
+                    .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading).padding(.top, 36).padding(.bottom, 40)
             }
             .padding(.horizontal, 40)
         }

@@ -70,12 +70,7 @@ final class Show: ObservableObject {
         lampsOn = d.object(forKey: "lights") as? Bool ?? true
         looks = LookStore.load()
         selected = d.string(forKey: "light")
-        var t = TilesLink.Mode()
-        t.on = d.bool(forKey: "tilesOn")
-        t.animation = TilesLink.Animation(rawValue: d.integer(forKey: "tilesAnimation")) ?? .meter
-        if let c = d.string(forKey: "tilesMain").flatMap(RGB.init(hex:)) { t.main = c }
-        if let c = d.string(forKey: "tilesSecond").flatMap(RGB.init(hex:)) { t.second = c }
-        tiles = t
+        tiles = d.data(forKey: "tiles").flatMap { try? JSONDecoder().decode(TilesLink.Mode.self, from: $0) } ?? TilesLink.Mode()
         trimMs = d.integer(forKey: "trim")
         Sync.trim = Double(d.integer(forKey: "trim")) / 1000
         scenes = venue.scenes
@@ -229,11 +224,7 @@ final class Show: ObservableObject {
     }
 
     private func saveTiles() {
-        let d = UserDefaults.standard
-        d.set(tiles.on, forKey: "tilesOn")
-        d.set(tiles.animation.rawValue, forKey: "tilesAnimation")
-        d.set(tiles.main.hex, forKey: "tilesMain")
-        d.set(tiles.second.hex, forKey: "tilesSecond")
+        if let data = try? JSONEncoder().encode(tiles) { UserDefaults.standard.set(data, forKey: "tiles") }
     }
 
     // MARK: Phone page

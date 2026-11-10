@@ -7,13 +7,25 @@ import CoreMIDI
 import Foundation
 
 final class TilesLink {
-    enum Animation: Int, CaseIterable { case meter, pulse, ripple, sparkle }
+    enum Animation: Int, CaseIterable, Codable { case meter, pulse, ripple, sparkle, rain, chase, spectrum }
+    enum Glow: Int, CaseIterable, Codable { case white, main, second, off }
 
-    struct Mode: Equatable {
+    // Everything chosen on the TILES page. The sliders are 0-100; 50 is the firmware's own pace
+    // for tail, sensitivity and speed.
+    struct Mode: Equatable, Codable {
         var on = false
         var animation = Animation.meter
         var main = RGB(255, 0, 255)
         var second = RGB(148, 171, 249)
+        var accent = RGB(255, 255, 255)
+        var glow = Glow.white
+        var strobe = 13       // the underglow's flash, 20-400 ms
+        var brightness = 100  // the pads
+        var tail = 50         // how long the pads' lights hang on
+        var bed = 33          // the dim light under the hits
+        var sensitivity = 50  // how high the meter's bars reach
+        var speed = 50        // ripple, rain and chase
+        var meterColours = false  // the meter in the colours, not white/yellow/red
     }
 
     private var client = MIDIClientRef()
@@ -66,6 +78,8 @@ final class TilesLink {
     private static func seven(_ v: Double) -> UInt8 { UInt8(max(0, min(127, Int((v * 127).rounded())))) }
     private static func seven(_ c: UInt8) -> UInt8 { c >> 1 }
 
+    private static func seven(percent v: Int) -> UInt8 { UInt8(max(0, min(127, Int((Double(v) / 100 * 127).rounded())))) }
+
     private func sendMode() {
         lock.lock()
         let m = mode
@@ -74,6 +88,11 @@ final class TilesLink {
         send([0x01, m.on ? 1 : 0, UInt8(m.animation.rawValue),
               Self.seven(m.main.r), Self.seven(m.main.g), Self.seven(m.main.b),
               Self.seven(m.second.r), Self.seven(m.second.g), Self.seven(m.second.b)])
+        guard m.on else { return }
+        send([0x03, UInt8(m.glow.rawValue), Self.seven(percent: m.strobe), Self.seven(percent: m.brightness),
+              Self.seven(percent: m.tail), Self.seven(percent: m.bed), Self.seven(percent: m.sensitivity),
+              Self.seven(percent: m.speed), m.meterColours ? 1 : 0,
+              Self.seven(m.accent.r), Self.seven(m.accent.g), Self.seven(m.accent.b)])
     }
 
     var on: Bool { lock.lock(); defer { lock.unlock() }; return mode.on && destination != 0 }
