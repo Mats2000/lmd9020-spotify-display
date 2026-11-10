@@ -11,6 +11,7 @@
 #include "config.h"
 #include "cover.h"
 #include "https.h"
+#include "prefetch.h"
 #include "render/text.h"
 #include "spotify.h"
 
@@ -72,7 +73,9 @@ bool loadTrack(const Track& t) {
                   uxTaskGetStackHighWaterMark(nullptr));
     ScenePalette pal;
     int colours = 0;
-    bool ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
+    bool ok = prefetch::load(t, art, pal, colours);
+    prefetch::forget();  // the slot is for the song after this one
+    if (!ok) ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
     if (!ok) {  // one more try: a dropped download is usually a one-off
         vTaskDelay(pdMS_TO_TICKS(500));
         ok = fetchCover(t.imageUrl, t.imageWidth, t.thumbUrl, t.thumbWidth, art, pal, colours);
@@ -196,6 +199,7 @@ void netTask(void*) {
         }
     }
     spotify.begin();
+    if (!prefetch::begin()) Serial.println("No flash partition for the next cover");
 
     String currentKey;
     int coverRetries = 0;  // left for the current track's cover, if it didn't come
@@ -204,6 +208,10 @@ void netTask(void*) {
     bool hasPlayed = false;
     bool reallyPlaying = false;
     int failures = 0;
+    String askedFor;  // the song the queue was last asked about
+    bool askedLate = false;
+    Track wanted;  // the next song, once the slot is erased for its cover
+    bool haveWanted = false;
 
     for (;;) {
         beatMs = millis();
@@ -250,6 +258,27 @@ void netTask(void*) {
                     lastPlayingMs = millis();
                     hasPlayed = true;
                     wait = POLL_PLAYING_MS;
+                    // Ask again just as the song should end, and look at the queue when the song
+                    // starts and once more near its end (it may have changed).
+                    uint32_t left = track.durationMs > track.progressMs ? track.durationMs - track.progressMs : 0;
+                    if (track.durationMs && left + 400 < wait) wait = left + 400 < 800 ? 800 : left + 400;
+                    bool late = track.durationMs && left < PREFETCH_LATE_MS;
+                    if (askedFor != currentKey || (late && !askedLate)) {
+                        if (askedFor != currentKey) askedLate = false;
+                        askedFor = currentKey;
+                        askedLate = askedLate || late;
+                        Track n;
+                        if (spotify.next(n) == SpotifyResult::Item && n.key != currentKey && !prefetch::holds(n.key)) {
+                            prefetch::forget();
+                            wanted = n;
+                            haveWanted = true;
+                        }
+                    }
+                }
+                if (haveWanted && wanted.key == currentKey) haveWanted = false;
+                if (haveWanted && prefetch::clean()) {
+                    haveWanted = false;
+                    prefetch::store(wanted);
                 }
                 break;
             case SpotifyResult::Nothing:
@@ -277,7 +306,12 @@ void netTask(void*) {
 
         // Stay on the cover through short pauses and track skips.
         setPlaying(hasPlayed && millis() - lastPlayingMs < PAUSE_GRACE_MS, !reallyPlaying);
-        vTaskDelay(pdMS_TO_TICKS(wait));
+        // Meanwhile, the next cover's slot is erased a sector at a time (each pauses the render core).
+        for (const uint32_t until = millis() + wait; (int32_t)(until - millis()) > 0;) {
+            prefetch::eraseStep();
+            int32_t left = (int32_t)(until - millis());
+            vTaskDelay(pdMS_TO_TICKS(left < 150 ? (left > 1 ? left : 1) : 150));
+        }
     }
 }
 

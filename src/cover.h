@@ -9,3 +9,7 @@
 // from the thumbnail; `colours` says how many, 0 for RGB332). False on failure.
 bool fetchCover(const String& url, int imageWidth, const String& thumbUrl, int thumbWidth, uint32_t* dst,
                 ScenePalette& pal, int& colours);
+
+// The same from JPEGs already in memory (a prefetched cover); thumbLen 0: no colours of its own.
+bool decodeCover(const uint8_t* thumb, size_t thumbLen, int thumbWidth, const uint8_t* image, size_t imageLen,
+                 int imageWidth, uint32_t* dst, ScenePalette& pal, int& colours);

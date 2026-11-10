@@ -37,6 +37,7 @@
 
 #define POLL_PLAYING_MS 3000  // how often to ask Spotify what's playing
 #define POLL_IDLE_MS 5000     // ...while nothing is
+#define PREFETCH_LATE_MS 40000  // the queue is checked again this long before a song ends
 // Pauses shorter than this keep the cover up.
 #define PAUSE_GRACE_MS 8000
 

@@ -18,8 +18,18 @@ struct Source {
 
 uint32_t lowestHeap;  // during the decode, for the log
 
+// A JPEG already in memory (a prefetched cover); null: the HTTPS body.
+const uint8_t* memAt;
+size_t memLeft;
+
 // Returns `len` bytes unless the body ends; buf == nullptr means skip them.
 size_t jpegRead(void*, size_t, uint8_t* buf, size_t len) {
+    if (memAt) {
+        size_t n = len < memLeft ? len : memLeft;
+        if (buf) memcpy(buf, memAt, n);
+        memAt += n, memLeft -= n;
+        return n;
+    }
     uint32_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     if (free8 < lowestHeap) lowestHeap = free8;
     uint8_t scratch[64];
@@ -65,32 +75,68 @@ bool sampleWrite(void* arg, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint
     return true;
 }
 
-// Picks the cover's own colours from a small copy of it. Returns how many (0: none).
-int fetchCoverPalette(const String& url, int width, uint32_t* dst) {
-    String host, path;
-    if (!splitUrl(url, host, path)) return 0;
+// Picks the cover's own colours from a small copy of it (len bytes from jpegRead). Returns how
+// many (0: none).
+int decodePalette(int width, int len, uint32_t* dst) {
     int scale = 0;
     if (width <= 0) width = 64;
     while (scale < 3 && (width >> scale) > 80) scale++;
-    if (https.request("GET", host.c_str(), path.c_str()) != 200) return 0;
     Sample s{dst, 0, 0, ART_WORDS - 2 * ART_PALETTE_WORDS};
-    int len = https.contentLength();
     esp_err_t err = esp_jpg_decode(len > 0 ? len : 0, (jpg_scale_t)scale, jpegRead, sampleWrite, &s);
     if (err != ESP_OK || s.w * s.h < 16 || s.w * s.h > s.cap) return 0;
     return buildArtPalette(dst, s.w * s.h);
 }
 
+int fetchCoverPalette(const String& url, int width, uint32_t* dst) {
+    String host, path;
+    if (!splitUrl(url, host, path)) return 0;
+    if (https.request("GET", host.c_str(), path.c_str()) != 200) return 0;
+    return decodePalette(width, https.contentLength(), dst);
+}
+
+// Largest power-of-two reduction that keeps the cover at least ART_H tall.
+int coverScale(int& imageWidth) {
+    int scale = 0;
+    if (imageWidth <= 0) imageWidth = 640;
+    while (scale < 3 && (imageWidth >> (scale + 1)) >= ART_H) scale++;
+    return scale;
+}
+
 }  // namespace
+
+bool decodeCover(const uint8_t* thumb, size_t thumbLen, int thumbWidth, const uint8_t* image, size_t imageLen,
+                 int imageWidth, uint32_t* dst, ScenePalette& pal, int& colours) {
+    uint32_t started = millis();
+    int scale = coverScale(imageWidth);
+    colours = 0;
+    if (thumbLen) {
+        memAt = thumb, memLeft = thumbLen;
+        colours = decodePalette(thumbWidth, thumbLen, dst);
+    }
+    ArtBuilder* builder = new (std::nothrow) ArtBuilder;
+    if (!builder) {
+        memAt = nullptr;
+        return false;
+    }
+    builder->reserve(imageWidth >> scale, 8);
+    memAt = image, memLeft = imageLen;
+    Source src{builder, dst, colours};
+    esp_err_t err = esp_jpg_decode(imageLen, (jpg_scale_t)scale, jpegRead, jpegWrite, &src);
+    memAt = nullptr;
+    builder->finish();
+    if (err == ESP_OK) pal = pickPalette(builder->stats());
+    delete builder;
+    Serial.printf("Cover from flash %d px (%u KB): %s, %d colours, %u ms\n", imageWidth, (unsigned)(imageLen / 1024),
+                  esp_err_to_name(err), colours, (unsigned)(millis() - started));
+    return err == ESP_OK;
+}
 
 bool fetchCover(const String& url, int imageWidth, const String& thumbUrl, int thumbWidth, uint32_t* dst,
                 ScenePalette& pal, int& colours) {
     String host, path;
     if (!splitUrl(url, host, path)) return false;
 
-    // Largest power-of-two reduction that keeps the cover at least ART_H tall.
-    int scale = 0;
-    if (imageWidth <= 0) imageWidth = 640;
-    while (scale < 3 && (imageWidth >> (scale + 1)) >= ART_H) scale++;
+    int scale = coverScale(imageWidth);
 
     uint32_t started = millis();
     lowestHeap = UINT32_MAX;
