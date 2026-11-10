@@ -115,9 +115,9 @@ Drift drift(uint32_t ms, int rx, int ry, uint32_t periodX, uint32_t periodY) {
 
 // Up to 10 px sideways (at most a pixel every half minute), barely vertically: the song line
 // sits near the bottom.
-Drift cardDrift(uint32_t ms) { return drift(ms, 10, 3, 38 * 60000u, 59 * 60000u); }
+Drift cardDrift(uint32_t ms) { return drift(ms, 5, 2, 38 * 60000u, 59 * 60000u); }
 // The clock: the brightest, most static thing on screen, so it roams furthest.
-Drift clockDrift(uint32_t ms) { return drift(ms, 10, 6, 37 * 60000u, 53 * 60000u); }
+Drift clockDrift(uint32_t ms) { return drift(ms, 5, 3, 37 * 60000u, 53 * 60000u); }
 
 // How long a change fades out and back in, by what is changing.
 struct Fade {

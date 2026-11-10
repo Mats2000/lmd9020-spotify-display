@@ -217,8 +217,8 @@ firmware's own scene code, and picks the style:
 - **Lava:** slow, smooth colour waves, quicker and brighter with the music.
 - **Rave:** a techno rig locked to the kick, cutting every bar to the next look: a square
   tunnel (frames the cover's shape leaving it on the eighths), laser sheets scanning on the beat,
-  an LED wall chasing in sixteenths, fans from the floor corners; a strobe and a ring of light on
-  every kick. Between kicks it keeps counting at the last tempo.
+  an LED wall chasing in sixteenths, thick pillars slamming on with the kick, blinds stepping
+  down; a strobe and a ring of light on every kick. Between kicks it keeps counting at the last tempo.
 - **Fractal:** after Aleph: a Julia set mirrored twelvefold round the cover, its shape wandering
   with the music, the bass pulsing its zoom, contour lines flowing through it and a ring of light
   on each beat.
@@ -257,13 +257,13 @@ unplugged). A clock and a cover are exactly that kind of picture. Three
 things fight it:
 
 - **Pixel shift.** The cover card and the screensavers' fixed parts (the
-  display frame, the poles, the fine print) drift up to ±10 px sideways and
-  ±3 px vertically on a slow Lissajous path, at most a pixel every half
-  minute. The clock roams ±10 × ±6 px. The periods share no factors, so the
+  display frame, the poles, the fine print) drift up to ±5 px sideways and
+  ±2 px vertically on a slow Lissajous path, at most a pixel every half
+  minute. The clock roams ±5 × ±3 px. The periods share no factors, so the
   path wanders over the whole area instead of retracing.
 - **TV snow.** Full-screen snow swings every pixel between black and white,
-  which clears a held image: for 10 seconds when the music stops, for the
-  last minute before sleep, and for 30 minutes when you press the board's
+  which clears a held image: for 5 seconds when the music stops, for the
+  last 30 seconds before sleep, and for 15 minutes when you press the board's
   **BOOT** button (press again to stop; it also wakes the display). Times are
   `REFRESH_*` in `include/config.h`.
 - **Rotation.** The screensaver changes every `SAVER_MINUTES` (20), so the

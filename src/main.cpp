@@ -186,7 +186,7 @@ static bool handleSleep() {
     if (np.playing) lastActiveMs = millis();
     const uint32_t sleepMs = SLEEP_AFTER_MINUTES * 60000UL, idleMs = millis() - lastActiveMs;
     bool sleepy = SLEEP_AFTER_MINUTES > 0 && idleMs >= sleepMs;
-    bool lastMinutes = SLEEP_AFTER_MINUTES > 0 && idleMs + REFRESH_BEFORE_SLEEP_MINUTES * 60000UL >= sleepMs;
+    bool lastMinutes = SLEEP_AFTER_MINUTES > 0 && idleMs + REFRESH_BEFORE_SLEEP_SECONDS * 1000UL >= sleepMs;
     scene.holdSnow(buttonSnow || lastMinutes);
     scene.setAwake(!sleepy);
 

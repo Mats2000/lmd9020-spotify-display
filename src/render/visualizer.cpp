@@ -498,6 +498,26 @@ float smoothEnergy(const VizInput& in, float dt, VizState& s) {
     return s.energy < 1 ? s.energy : 1;
 }
 
+// [x0, x1) x [y0, y1) raised to at least `level`, skipping the cover a row at a time.
+void fillRect(Area& a, int x0, int x1, int y0, int y1, int level) {
+    if (x0 < 0) x0 = 0;
+    if (x1 > Canvas::W) x1 = Canvas::W;
+    if (y0 < 0) y0 = 0;
+    if (y1 > a.bottom) y1 = a.bottom;
+    const uint8_t v = (uint8_t)(level < TOP ? level : TOP);
+    for (int y = y0; y < y1; y++) {
+        uint8_t* row = a.c.rows[y];
+        const bool coverRow = y >= a.y0 && y < a.y1;
+        for (int x = x0; x < x1; x++) {
+            if (coverRow && x >= a.x0 && x < a.x1) {
+                x = a.x1 - 1;
+                continue;
+            }
+            if (row[x] < v) row[x] = v;
+        }
+    }
+}
+
 // A thin line at `level`, with a faint pixel either side so it glows a little.
 void laser(Area& a, int ax, int ay, int bx, int by, int level) {
     const int dx = abs(bx - ax), dy = abs(by - ay), sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
@@ -537,7 +557,8 @@ inline float fract(float x) {
 
 // A techno rave: a warehouse rig locked to the kick. Every bar (four beats) it cuts to the next
 // look: a square tunnel (frames of light leaving the cover on the eighths), laser sheets scanning
-// up and down on the beat, an LED wall chasing in sixteenths, then fans from the floor corners. Through all of
+// up and down on the beat, an LED wall chasing in sixteenths, thick pillars slamming on with the
+// kick, then blinds stepping down in sixteenths. Through all of
 // them a hard strobe on each kick, a ring of light leaving the cover, and haze streaking out.
 void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     noteBeat(in, ms, s);
@@ -551,7 +572,7 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
             flow.x[j][i] = (int32_t)((a.cx + (i * (Canvas::W / MESH) - a.cx) * push) * 65536);
             flow.y[j][i] = (int32_t)((a.cy + (j * (Canvas::H / MESH) - a.cy) * push) * 65536);
         }
-    feedback(a, s.fed, flow, keepFor(dt, s.step >= 0 && (s.step / 16) % 4 == 0 ? 2.0f : 9.0f - 4.0f * e), 1);  // the tunnel keeps its frames
+    feedback(a, s.fed, flow, keepFor(dt, s.step >= 0 && (s.step / 16) % 5 == 0 ? 2.0f : 9.0f - 4.0f * e), 1);  // the tunnel keeps its frames
 
     // Where we are in the beat: the last kick, and the beat's length from the last two.
     const int n = s.nextBeat;
@@ -562,7 +583,7 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     const uint32_t since = last ? ms - last : ms;
     const int counted = n + (int)(since / period);
     const float beatPhase = (float)(since % period) / period;  // 0..1 through this beat
-    const int look = (counted / 4) % 4, beatInBar = counted % 4;
+    const int look = (counted / 4) % 5, beatInBar = counted % 4;
     const int hi = TOP, lit = 150 + (int)(70 * e);
 
     if (since < 70) {  // the strobe: hard and short, everything off the cover
@@ -607,21 +628,23 @@ void rave(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
         for (int k = 0; k < bars; k++) {
             const bool on = ((k + step) % 4 == 0) || (e > 0.55f && (k * 3 + step) % 8 == 0);
             if (!on) continue;
-            for (int y = 0; y < a.bottom; y += 2)  // every other line: an LED panel's rows
-                for (int x = k * w + 1; x < (k + 1) * w - 1; x++) raise(a, x, y, level);
+            for (int y = 0; y < a.bottom; y += 2) fillRect(a, k * w + 1, (k + 1) * w - 1, y, y + 1, level);  // an LED panel's rows
         }
-    } else {  // fans from the floor corners, snapping to a new spread each beat
-        const int beams = 3 + (int)(5 * e);
-        const float spread = 0.5f + 0.35f * fastSin(counted * 2.3f);
-        for (int fan = 0; fan < 2; fan++) {
-            const int ox = fan ? Canvas::W - 1 : 0, oy = a.bottom - 1;
-            const float aim = fan ? -2.25f : -0.89f;
-            const float sweep = 0.45f * fastSin(s.phase * (1.3f + 0.4f * fan) + counted * 1.7f) * (fan ? -1 : 1);
-            for (int b = 0; b < beams; b++) {
-                const float ang = aim + sweep + (b - (beams - 1) * 0.5f) * spread / beams;
-                laser(a, ox, oy, ox + (int)(420 * fastCos(ang) / K), oy + (int)(420 * fastSin(ang)), lit);
-            }
+    } else if (look == 3) {  // pillars: thick columns slamming on with the kick and fading,
+                             // in a pattern that changes every beat
+        static const uint8_t PATTERNS[4] = {0xFF, 0x55, 0xAA, 0x81};  // all, every other, the others, the ends
+        const uint8_t on = beatInBar == 0 ? 0xFF : PATTERNS[(counted + (e > 0.6f ? beatInBar : 0)) % 4];
+        const int level = (int)(lit * (1 - 0.75f * beatPhase));
+        const int cols = 8, w = Canvas::W / cols;
+        for (int k = 0; k < cols; k++) {
+            if (!(on >> k & 1)) continue;
+            fillRect(a, k * w + 3, (k + 1) * w - 3, 0, a.bottom, level);
         }
+    } else {  // blinds: thick bands across, stepping down a band every sixteenth
+        const int band = 14, gap = 10, pitch = band + gap;
+        const int offset = (sixteenth % 8) * pitch / 8 * 3 % pitch;
+        const int level = (int)(lit * (0.55f + 0.45f * in.high));
+        for (int y0 = offset - pitch; y0 < a.bottom; y0 += pitch) fillRect(a, 0, Canvas::W, y0, y0 + band, level);
     }
 }
 
@@ -701,8 +724,8 @@ void fractal(Area& a, float dt, uint32_t ms, const VizInput& in, VizState& s) {
     }
     volatile uint32_t* tab = fractalTab();
     uint8_t row[FS];
-    s.parity ^= 1;
-    for (int r = s.parity; r < FR; r += 2) {  // half the rings a frame, as Aleph does
+    s.parity = (s.parity + 1) & 3;
+    for (int r = s.parity; r < FR; r += 4) {  // a quarter of the rings a frame, as Aleph does when calm
         const float rad = (FR_MIN + (FR_MAX - FR_MIN) * r / (FR - 1)) / FR_MAX * zoom;
         float lift = s.flash * 0.7f;
         for (int i = 0; i < rings; i++) {
