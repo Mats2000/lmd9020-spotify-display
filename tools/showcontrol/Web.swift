@@ -16,6 +16,14 @@ final class WebAuth {
     private var fails = 0, lockedUntil = Date.distantPast
 
     var hasPassword: Bool { d.data(forKey: "webPass") != nil }
+
+    // What the web relay needs to check a password and the phones' keys: the salt and hash, and the
+    // generation the keys must be from (a new password or "sign out every phone" moves it on).
+    var relayCheck: [String: AnyHashable] {
+        guard let hash = d.data(forKey: "webPass"), let salt = d.data(forKey: "webSalt") else { return ["none": true] }
+        return ["salt": salt.base64EncodedString(), "hash": hash.base64EncodedString(), "epoch": d.integer(forKey: "webEpoch")]
+    }
+    private func nextEpoch() { d.set(d.integer(forKey: "webEpoch") + 1, forKey: "webEpoch") }
     var keys: [String] { d.stringArray(forKey: "webKeys") ?? [] }
 
     private func derive(_ password: String, _ salt: Data) -> Data {
@@ -39,6 +47,7 @@ final class WebAuth {
         d.set(salt, forKey: "webSalt")
         d.set(derive(p, salt), forKey: "webPass")
         d.set([String](), forKey: "webKeys")  // a new password signs every phone out
+        nextEpoch()
         return true
     }
 
@@ -65,7 +74,10 @@ final class WebAuth {
         return keys.contains(Self.hash(key))
     }
 
-    func signOutAll() { d.set([String](), forKey: "webKeys") }
+    func signOutAll() {
+        d.set([String](), forKey: "webKeys")
+        nextEpoch()
+    }
 }
 
 final class WebServer {

@@ -1,0 +1,8 @@
+{
+  "name": "showcontrol",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@upstash/redis": "^1.35.0"
+  }
+}

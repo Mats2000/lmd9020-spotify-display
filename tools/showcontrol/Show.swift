@@ -34,7 +34,7 @@ final class Show: ObservableObject {
     @Published var webAddress: String?
     @Published var hasPassword = WebAuth.shared.hasPassword
     @Published var phonesSignedIn = WebAuth.shared.keys.count
-    let publicAddress = UserDefaults.standard.string(forKey: "publicAddress") ?? "https://showcontrol.matiascevallos.com"
+    let publicAddress = UserDefaults.standard.string(forKey: "relayURL")
     @Published var speakerMs = 0
     @Published var timing = Rig.Timing()
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled

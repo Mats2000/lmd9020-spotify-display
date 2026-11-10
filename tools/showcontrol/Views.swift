@@ -391,7 +391,7 @@ struct ScenesPage: View {
                     .frame(width: 300)
                     VStack(alignment: .leading, spacing: 4) {
                         SectionLabel(text: "On your phone").padding(.bottom, 8)
-                        Text(show.publicAddress).font(.sora(13)).textSelection(.enabled)
+                        Text(show.publicAddress ?? "Not on the web yet").font(.sora(13)).textSelection(.enabled)
                         Text("At home also \(show.webAddress ?? "—")").font(.soraLight(12)).foregroundColor(Sentia.ink2).textSelection(.enabled).padding(.top, 2)
                         Text(show.hasPassword ? "Phones sign in with the password set here." : "Set a password before a phone can sign in.")
                             .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 10)
@@ -407,7 +407,6 @@ struct ScenesPage: View {
                             }
                             Chip(title: "Sign out every phone", chosen: false) { show.signOutPhones() }
                         }.padding(.top, 8)
-                        Text("Signed in: \(show.phonesSignedIn)").font(.soraLight(11)).foregroundColor(Sentia.ink2).padding(.top, 8)
                     }
                     .frame(width: 320)
                 }

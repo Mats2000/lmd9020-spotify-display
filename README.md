@@ -270,10 +270,19 @@ every light the show still has goes back to its own colour and brightness.
 password on the Scenes page (10 characters or more); a phone signs in once and keeps a long random
 key (the Mac keeps only its hash). Five wrong tries lock sign-in for 30 s, doubling each time;
 "Sign out every phone" or a new password drops every key. In Safari, Share > Add to Home Screen
-makes it an app. `tools/showcontrol/site/deploy.sh` also puts it on the web: Tailscale Funnel gives
-this Mac a public HTTPS address (outgoing only, nothing opened on the router) and a Vercel project
-on `showcontrol.matiascevallos.com` passes every request to it. The page only answers while the Mac
-is awake with Show Control running.
+makes it an app.
+
+**On the web** (`showcontrol.matiascevallos.com`, from `tools/showcontrol/site`): a Vercel project
+serves the same page with a relay behind it, and Show Control reaches out to it, so nothing on the
+home network is opened. The Mac keeps one request open to the relay (`api/mac`), which hands over a
+tap the moment one is queued (a blocking pop on Upstash Redis, free plan); while a phone is
+looking, the Mac posts its state a few times a second. The Mac sends the relay the password's
+salt and hash and a key generation, so the relay checks sign-ins itself and gives phones signed
+keys; "Sign out every phone" or a new password moves the generation on, and removing the password
+removes it from the relay too. The Mac proves itself with a secret stored as `MAC_SECRET` on Vercel
+and as `relaySecret` in the app's defaults, beside `relayURL`. `site/deploy.sh` copies the page,
+fonts and icon in and deploys. The page only works while the Mac is awake with Show Control
+running. A tap takes about 0.4 s there and back.
 
 **Kicks drive everything:** they're found on the raw samples in the kick drum's own band
 (30-150 Hz) as sharp rises over a 5 ms average, against the tempo found from the last four

@@ -11,7 +11,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Fonts" "$OBJ"
 for src in demo.cpp "$ROOT"/src/render/*.cpp; do
     xcrun clang++ -std=c++17 -O2 -I. -I"$ROOT/include" -I"$ROOT/src" -c "$src" -o "$OBJ/$(basename "$src" .cpp).o"
 done
-xcrun swiftc -O -swift-version 5 -import-objc-header DemoBridge.h Audio.swift Display.swift Lamps.swift Fixtures.swift Rig.swift Show.swift Web.swift Style.swift Views.swift main.swift \
+xcrun swiftc -O -swift-version 5 -import-objc-header DemoBridge.h Audio.swift Display.swift Lamps.swift Fixtures.swift Rig.swift Show.swift Web.swift Relay.swift Style.swift Views.swift main.swift \
     "$OBJ"/*.o -lc++ -o "$APP/Contents/MacOS/Show Control"
 cp Info.plist "$APP/Contents/Info.plist"
 # The Matter helper runs from Application Support: macOS holds back anything the app starts from

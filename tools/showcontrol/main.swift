@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var show: Show!
     private var activity: NSObjectProtocol?
     private var web: WebServer?
+    private var relay: Relay?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Keep running at full rate with the window closed: no App Nap.
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Sentia.registerFonts()
         show = Show()
         web = WebServer(show: show)
+        relay = Relay(show: show)
         let menu = NSMenu(), appItem = NSMenuItem()
         menu.addItem(appItem)
         let appMenu = NSMenu()
