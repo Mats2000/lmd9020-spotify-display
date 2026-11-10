@@ -441,7 +441,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         analyzer = Analyzer { [weak self] in self?.link.send($0) }
         capture = Capture(analyzer: analyzer)
         applyStyle()
-        watcher.onNewTrack = { track, image in
+        watcher.onNewTrack = { [weak self] track, image in
+            if self?.shuffling == true { self?.shuffle() }
             if let image {
                 let cover = rgb(image, size: 320), thumb = rgb(image, size: 64)
                 cover.withUnsafeBufferPointer { c in
@@ -474,6 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateCapture() {
         watcher.poll()
+        if shuffling && Date().timeIntervalSince(shuffledAt) > 60 { shuffle() }
         if analyzer.enabled && (watcher.playing || !watcher.reachable) {
             quietSince = nil
             startCapture()
@@ -560,10 +562,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // "Off", then the styles (by name, so a saved choice survives the list changing).
+    // Shuffle: a new style (never the same twice running) with each song and every minute.
+    private var shuffling = false
+    private var shuffledAt = Date.distantPast
+
+    private func shuffle() {
+        var next = Int.random(in: 0..<styles.count)
+        if styles.count > 1 && next == Int(analyzer.style) { next = (next + 1 + Int.random(in: 0..<styles.count - 1)) % styles.count }
+        analyzer.style = UInt8(next)
+        shuffledAt = Date()
+    }
+
     private func applyStyle() {
         let title = stylePicker.titleOfSelectedItem ?? styles[0]
         analyzer.enabled = title != "Off"
-        analyzer.style = UInt8(styles.firstIndex(of: title) ?? 0)
+        shuffling = title == "Shuffle"
+        if shuffling { shuffle() } else { analyzer.style = UInt8(styles.firstIndex(of: title) ?? 0) }
         analyzer.scheme = UInt8(schemes.firstIndex(of: schemePicker.titleOfSelectedItem ?? schemes[0]) ?? 0)
     }
 
@@ -631,10 +645,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         login.action = #selector(toggleLogin)
         login.font = sora("Regular", 11)
         stylePicker.addItem(withTitle: "Off")
+        stylePicker.addItem(withTitle: "Shuffle")
         stylePicker.menu?.addItem(.separator())
         stylePicker.addItems(withTitles: styles)
         let saved = UserDefaults.standard.string(forKey: "styleName") ?? styles[0]
-        stylePicker.selectItem(withTitle: saved == "Off" || styles.contains(saved) ? saved : styles[0])
+        stylePicker.selectItem(withTitle: saved == "Off" || saved == "Shuffle" || styles.contains(saved) ? saved : styles[0])
         stylePicker.font = sora("Regular", 12)
         stylePicker.target = self
         stylePicker.action = #selector(pickStyle)

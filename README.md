@@ -222,6 +222,8 @@ firmware's own scene code, and picks the style:
   with the music, the bass pulsing its zoom, contour lines flowing through it and a ring of light
   on each beat.
 
+**Shuffle** in the style menu picks a new style with every song and every minute.
+
 Next to the style, the app picks the colours, for every style: **Cover Colours** (up to three
 of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** (deep purple,
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
