@@ -264,9 +264,9 @@ final class Rig {
 
     private func flash(_ f: Fixture, _ strength: Float) {
         let amount = Double(f.settings.kick) / 100
-        // A Matter bulb takes a kick as two commands of ~130 ms: faster than one every 250 ms and
-        // they'd queue in it, so it would fall further and further behind.
-        if f.kind == .matter, Date().timeIntervalSince(kickedAt[f.id] ?? .distantPast) < 0.25 { return }
+        // A Matter bulb takes a kick as two commands of a round trip each: closer together than about
+        // two round trips and they queue in it, run together (it looks like fading) and fall behind.
+        if f.kind == .matter, Date().timeIntervalSince(kickedAt[f.id] ?? .distantPast) < max(0.3, 2.2 * matter.trip(f.address)) { return }
         let e = engine(for: f)
         e.kick(strength, amount: amount)
         kickedAt[f.id] = Date()
@@ -377,15 +377,16 @@ final class Rig {
     private func tickMatter(_ f: Fixture, _ e: LampEngine, now: Date, dt: Double) {
         _ = e.frame(dt: dt, energy: energy)
         let l = f.settings.look, base = level(f), id = f.address
+        let strobe = f.settings.kick > 100  // only hard changes: kicks, and colours landing while it's off
         let every = [8, 4, 2, 1, 1][max(0, min(4, l.speed - 1))]
         let step = l.bySong ? songStep : e.beats / every
         if step != lastStep[f.id] {
             lastStep[f.id] = step
             let colours = e.palette.isEmpty ? [RGB(255, 236, 210)] : e.palette
             let c = l.random ? colours.randomElement()! : colours[step % colours.count]
-            if c != matterColour[f.id] { matter.colour(id, c, fade: l.bySong ? 1.5 : l.speed >= 4 ? 0 : 0.2) }
+            if c != matterColour[f.id] { matter.colour(id, c, fade: strobe ? 0 : l.bySong ? 1.5 : l.speed >= 4 ? 0 : 0.2) }
             matterColour[f.id] = c
-        } else if now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.3,
+        } else if !strobe, now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.3,
                   now.timeIntervalSince(kickedAt[f.id] ?? .distantPast) > 1.0,  // the kicks set it meanwhile
                   abs(base - (matterLevel[f.id] ?? -1)) > 0.03 {
             levelAt[f.id] = now

@@ -261,11 +261,12 @@ under a name, called back with one click. Everything lives in
   it to Application Support (macOS keeps an app's helpers out of the Documents folder) and the app
   runs it from there; its output is in `~/Library/Logs/Show Control/matter.log`.
 
-**Alexa keeps the last word.** When a light is turned off, or set to a colour or a white from
-outside the show (Alexa, a routine, its own app), the show lets go of it and leaves it alone, also
-after a restart, until **Take back**. **Hand to Alexa** lets go by hand. A Matter light counts as
-taken when its colour mode changes: the show only ever sends hue and saturation, and Alexa sends
-colours and whites another way (the hue a bulb reports back drifts, so it isn't compared). Ten
+**Alexa keeps the last word.** When a light is turned off from outside the show (Alexa, a routine,
+its own app), the show lets go of it and leaves it off, also after a restart, until **Take back**.
+**Hand to Alexa** lets go by hand. For a Matter light every "it went off" report is matched to the
+show's own offs (the strobe turns it off between kicks): one with no off from the show in the last
+1.5 s is someone else's. Colour reports aren't used: the bulb lights pale colours with its white
+LEDs and reports "white", and the hue it reports drifts. Ten
 seconds after the music stops, or when a light or all lights are switched off or the app quits,
 every light the show still has goes back to its own colour and brightness.
 

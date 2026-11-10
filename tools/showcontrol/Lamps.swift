@@ -450,6 +450,13 @@ final class MatterLights {
     private let lock = NSLock()
     private var trips: [String: Double] = [:]
 
+    // A command's round trip to this light, lately.
+    func trip(_ id: String) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return trips[id] ?? 0.15
+    }
+
     // How long a light takes to show a command (half the round trip, and a little for the bulb).
     func own(_ id: String) -> Double {
         lock.lock()

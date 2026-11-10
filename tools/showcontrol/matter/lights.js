@@ -76,7 +76,24 @@ switch (command) {
         for (const peer of lights()) {
             wake(peer);
             await peer.start();
-            all.set(peer.id, { part: lightPart(peer), busy: false, next: null, saved: null, driving: false, released: false, trip: 0 });
+            const light = { part: lightPart(peer), busy: false, next: null, saved: null, driving: false, released: false, trip: 0 };
+            all.set(peer.id, light);
+            // Each time the light reports it went off: one of the show's own offs (sent in the last
+            // 1.5 s, not yet matched to a report) or someone else's. Someone else's (Alexa's) lets it
+            // go, and it's left off, as asked, even if a kick was on its way.
+            const changed = light.part.eventsOf?.("onOff")?.onOff$Changed;
+            if (changed) {
+                light.watched = true;
+                changed.on(on => {
+                    if (on !== false || !light.driving || light.released) return;
+                    const now = Date.now();
+                    light.ownOffs = (light.ownOffs ?? []).filter(t => now - t < 1500);
+                    if (light.ownOffs.length) { light.ownOffs.shift(); return; }
+                    if (!light.seenOn) return;
+                    release(peer.id, light, "off");
+                    setTimeout(() => light.part.commandsOf(OnOffClient).off().catch(() => {}), 400);
+                });
+            }
             console.log(`Ready: ${peer.id}`);
         }
         const targets = cmd => cmd.id ? [all.get(cmd.id)].filter(Boolean) : [...all.values()];
@@ -135,6 +152,8 @@ switch (command) {
                 if (cmd.then === undefined || gen !== light.kicks || !light.driving) return;
                 if (cmd.off && part.stateOf(OnOffClient) !== undefined) {
                     light.ourOff = true;
+                    light.offAt = Date.now();
+                    (light.ownOffs ??= []).push(Date.now());
                     await part.commandsOf(OnOffClient).offWithEffect({ effectIdentifier: 0, effectVariant: 1 });
                     return;
                 }
@@ -188,19 +207,20 @@ switch (command) {
             console.log(`Released: ${id} ${why}`);
         };
 
-        // Someone else (Alexa, a routine, the switch) changed a light mid-show: let it go until the app
-        // takes it back. Off, or a colour or white set another way than the show's hue and saturation
-        // (the hue the bulb reports back drifts from the one sent, so it isn't compared).
+        // Someone else (Alexa, a routine, the switch) turned a light off mid-show: let it go until the
+        // app takes it back. (Colour reports aren't used: a bulb lights pale colours with its white
+        // LEDs and reports "white", and the hue it reports drifts from the one sent.)
         setInterval(() => {
             for (const [id, light] of all) {
                 if (!light.driving || light.released) continue;
                 const p = light.part, on = p.stateOf(OnOffClient)?.onOff, c = p.stateOf(ColorControlClient);
                 if (on === true) light.seenOn = true;
-                if (light.seenOn && on === false && !light.ourOff) { release(id, light, "off"); continue; }
-                if (!c) continue;
-                if (c.colorMode === 0) light.seenHue = true;
-                if (light.seenHue && c.colorMode === 2) release(id, light, "white");
-                else if (light.seenHue && c.colorMode === 1) release(id, light, "colour");
+                // Off, on two checks running and not just after the show's own off (the bulb reports it a
+                // few hundred ms late, often after the next kick has turned it back on).
+                const offNow = !light.watched && light.seenOn && on === false && !light.ourOff && Date.now() - (light.offAt ?? 0) > 3000;
+                light.offSeen = offNow ? (light.offSeen ?? 0) + 1 : 0;
+                if (light.offSeen >= 2) { release(id, light, "off"); continue; }
+
             }
         }, 500);
 
