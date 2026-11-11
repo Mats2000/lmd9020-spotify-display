@@ -81,6 +81,14 @@ nav[hidden] { display: none; }
 .quick { display: flex; gap: 10px; margin-top: 18px; }
 .quick .row { flex: 1; border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; }
 .macro-about { color: var(--ink2); font-size: 11.5px; margin: -2px 0 0; }
+.strip-top { display: flex; gap: 18px; align-items: flex-end; margin: 14px 0 4px; }
+.strip-top div { font: 600 20px "Exo 2", sans-serif; }
+.strip-top small { display: block; font: 400 10px Sora, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); }
+.desk { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+.key { height: 54px; border-radius: 14px; border: 1.2px solid var(--line); background: none; color: var(--text); font: 400 14px Sora, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+.key.lit { background: #ff00ff; border-color: #ff00ff; color: var(--ink); }
+.pads { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pads button { height: 56px; border-radius: 14px; border: 1px solid var(--line); background: none; color: var(--text); font: 400 13px Sora, sans-serif; }
 nav button { flex: 1; max-width: 170px; height: 44px; font: 400 14px Sora, sans-serif; color: var(--ink2); background: none; border: 0; border-radius: 12px; }
 nav button.on { color: var(--text); background: var(--panel); }
 .gate { margin-top: 26vh; text-align: center; }
@@ -101,7 +109,7 @@ nav button.on { color: var(--text); background: var(--panel); }
 <body>
 <div id="app"></div>
 <nav id="nav" hidden>
-  <button data-tab="autopilot">Autopilot</button><button data-tab="lights">Lights</button><button data-tab="scenes">Scenes</button><button data-tab="display">Display</button>
+  <button data-tab="autopilot">Live</button><button data-tab="lights">Lights</button><button data-tab="scenes">Scenes</button><button data-tab="display">Display</button>
 </nav>
 <script>
 "use strict";
@@ -156,8 +164,8 @@ function show(s) {
   state = s;
   const f = current(s), l = f && f.look;
   const k = [tab, s.fixtures.map(x => x.id + x.held + x.on + x.name + x.look.name + x.preset).join(), s.presets.map(p => p.id + p.name).join(),
-    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick, f.bulb].join(), s.autopilot, s.autoLook, s.autoTier, s.palette,
-    (s.macros || []).map(m => m.value).join(), s.tilesOn, l && JSON.stringify(l, Object.keys(l).sort()), s.style, s.scheme, s.lampsOn].join("|");
+    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick, f.bulb].join(), s.autopilot, s.autoLook, s.palette,
+    (s.macros || []).map(m => m.value).join(), s.tilesOn, s.master, s.blackout, s.flash, s.freeze, l && JSON.stringify(l, Object.keys(l).sort()), s.style, s.scheme, s.lampsOn].join("|");
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === tab);
   if (k !== shape) { shape = k; render(s); return; }
   for (const x of s.fixtures) for (const el of document.querySelectorAll(`[data-live="${CSS.escape(x.id)}"]`)) el.outerHTML = strip(x.colours, ` data-live="${esc(x.id)}"`);
@@ -165,7 +173,13 @@ function show(s) {
   if (np) np.textContent = s.title ? `${s.title} · ${s.artist}` : s.status;
   const bar = document.querySelector("[data-energy]");
   if (bar) bar.style.width = `${Math.min(100, Math.round((s.energy || 0) * 140))}%`;
+  const bpm = document.querySelector("[data-bpm]"), moment = document.querySelector("[data-moment]");
+  if (bpm) bpm.textContent = bpmText(s);
+  if (moment) moment.innerHTML = momentText(s);
 }
+
+const bpmText = s => (s.playing && s.bpm ? String(s.bpm) : "–");
+const momentText = s => (s.playing ? esc((s.autoTier || "").replace(/^./, c => c.toUpperCase())) : "Paused");
 
 const PILOTS = [["off", "Off", "Everything as you set it"], ["club", "Club", "Follows the song's arc, hits on drops"],
   ["lounge", "Lounge", "Slow, evolving, never strobes"], ["rave", "Rave", "Maximal, a new look every 8 bars"]];
@@ -173,12 +187,17 @@ const PALETTES = [["cover", "Cover"], ["sentia", "Sentia"], ["ice", "Ice"], ["su
 
 // The control centre: the autopilot first, then the quick switches.
 function autopilotTab(s) {
-  let h = `<div class="pilot">${PILOTS.map(([k, n, about]) => `<button class="${s.autopilot === k ? "on" : ""}" ${data({ action: "autopilot", style: k })}><b>${n}</b><span>${about}</span></button>`).join("")}</div>`;
+  let h = `<div class="strip-top"><div><small>BPM</small><span data-bpm>${bpmText(s)}</span></div><div><small>Moment</small><span data-moment>${momentText(s)}</span></div></div>`;
+  h += `<div class="bar"><i data-energy style="width:${Math.min(100, Math.round((s.energy || 0) * 140))}%"></i></div>`;
+  h += `<h2>Desk</h2>` + slider("Master", "value", s.master, 0, 100, "%", { action: "master" });
+  h += `<div class="desk"><button class="key${s.blackout ? " lit" : ""}" ${data({ action: "blackout", on: !s.blackout })}>Blackout</button>
+    <button class="key${s.flash ? " lit" : ""}" id="flashKey">Flash</button>
+    <button class="key${s.freeze ? " lit" : ""}" ${s.autopilot === "off" ? "disabled style=\"opacity:.45\"" : ""} ${data({ action: "freeze", on: !s.freeze })}>${s.freeze ? "Frozen" : "Freeze"}</button></div>`;
+  h += `<h2>Autopilot</h2><div class="pilot" style="margin-top:0">${PILOTS.map(([k, n, about]) => `<button class="${s.autopilot === k ? "on" : ""}" ${data({ action: "autopilot", style: k })}><b>${n}</b><span>${about}</span></button>`).join("")}</div>`;
   if (s.autopilot !== "off") {
     const p = s.autoParts || {};
     h += `<div class="now"><div class="look">${esc(s.autoLook || "Waiting for the music")}</div>
-      <div class="tier">${s.playing ? `The music: ${esc(s.autoTier)}` : "Paused"}</div>
-      <div class="bar"><i data-energy style="width:${Math.min(100, Math.round((s.energy || 0) * 140))}%"></i></div>`;
+`;
     if (p.lamps) h += `<dl class="parts"><dt>Lamps</dt><dd>${esc(p.lamps)}</dd><dt>Bulb</dt><dd>${esc(p.bulb)}</dd><dt>Display</dt><dd>${esc(p.display)}</dd>${p.tiles ? `<dt>TILES</dt><dd>${esc(p.tiles)}</dd>` : ""}</dl>`;
     h += `<button class="btn wide" ${data({ action: "nextLook" })}>Next look</button></div>`;
     h += `<h2>Palette</h2><div class="chips">${PALETTES.map(([k, n]) => chip(n, s.palette === k, { action: "autopilot", palette: s.palette === k ? "" : k })).join("")}</div>`;
@@ -187,6 +206,7 @@ function autopilotTab(s) {
       h += slider(esc(m.name), "value", m.value, 0, 100, "", { action: "macro", index: i }) + `<p class="macro-about">${esc(m.about)}</p>`;
     });
   }
+  if (s.scenes.length) h += `<h2>Scenes</h2><div class="pads">${s.scenes.map(sc => `<button ${data({ action: "sceneRecall", id: sc.id })}>${esc(sc.name)}</button>`).join("")}</div>`;
   h += `<div class="quick"><div class="row"><span class="grow">Lights</span>${sw(s.lampsOn, { action: "lamps", on: !s.lampsOn })}</div>`;
   if (s.tilesName) h += `<div class="row"><span class="grow">TILES</span>${sw(s.tilesOn, { action: "tiles", on: !s.tilesOn })}</div>`;
   return h + `</div>`;
@@ -234,7 +254,7 @@ function render(s) {
   const np = `<p class="sub" data-np>${esc(s.title ? `${s.title} · ${s.artist}` : s.status)}</p>`;
   let h;
   if (tab === "autopilot") {
-    h = `<h1>Show Control</h1>${np}` + autopilotTab(s);
+    h = `<h1>Live</h1>${np}` + autopilotTab(s);
   } else if (tab === "lights") {
     h = `<h1>Lights</h1>${np}<div class="row" style="margin:14px 0 18px"><span class="grow">Lights follow the music</span>${sw(s.lampsOn, { action: "lamps", on: !s.lampsOn })}</div>` + lightsTab(s);
   } else if (tab === "scenes") {
@@ -272,6 +292,18 @@ app.addEventListener("change", e => {
   if (t.dataset.colour !== undefined) { const cs = f.look.colours.slice(); cs[+t.dataset.colour] = t.value; return act({ action: "look", id: f.id, source: "own", colours: cs }); }
   if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: f.id, name: t.value.trim() });
 });
+// Flash is held: on while the finger's down (the Mac lets go by itself after 5 s).
+let flashing = false;
+const flashHeld = on => {
+  if (on === flashing) return;
+  flashing = on;
+  const k = document.getElementById("flashKey");
+  if (k) k.classList.toggle("lit", on);
+  act({ action: "flash", on });
+};
+app.addEventListener("pointerdown", e => { if (e.target.id === "flashKey") { e.preventDefault(); flashHeld(true); } });
+for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => flashHeld(false));
+
 nav.addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;

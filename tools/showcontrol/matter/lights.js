@@ -111,6 +111,12 @@ switch (command) {
             light.busy = true;
             const part = light.part, fade = Math.round((cmd.fade ?? 0.3) * 10);  // tenths of a second
             try {
+                if (cmd.off && part.stateOf(OnOffClient) !== undefined) {  // the show's blackout
+                    light.ourOff = true;
+                    light.offAt = Date.now();
+                    (light.ownOffs ??= []).push(Date.now());
+                    await timed(light, () => part.commandsOf(OnOffClient).offWithEffect({ effectIdentifier: 0, effectVariant: 1 }));
+                }
                 if (cmd.level !== undefined && part.stateOf(LevelControlClient) !== undefined) {
                     const level = Math.max(1, Math.min(254, Math.round(cmd.level * 254)));
                     light.ourOff = false;

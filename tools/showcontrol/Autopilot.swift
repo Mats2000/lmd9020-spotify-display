@@ -84,6 +84,8 @@ final class Autopilot {
 
     // A new look now (the remote's "next").
     func next() { change(reason: "manual") }
+    // Freeze: the look holds (it still follows the music's moment, to pick up from there).
+    var frozen = false
 
     func newSong(_ t: String) {
         guard t != title else { return }
@@ -146,6 +148,7 @@ final class Autopilot {
     }
 
     private func change(reason: String) {
+        if frozen && reason != "manual" && reason != "style" { return }
         if reason != "drop" { lastWasDrop = false }
         var pool = Self.pool(style, tier)
         // Rave's chaos, high: a peak look can come up any time.

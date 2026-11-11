@@ -1,4 +1,4 @@
-// The window: a sidebar of pages (Display, Lights, Scenes, then TILES), each a calm Sentia page.
+// The window: a sidebar of pages (Live, Lights, Display, TILES, Settings), each a calm Sentia page.
 
 import AppKit
 import SwiftUI
@@ -11,11 +11,11 @@ struct RootView: View {
             Rectangle().fill(Sentia.line).frame(width: 1)
             Group {
                 switch show.page {
-                case .display: DisplayPage(show: show)
+                case .live: LivePage(show: show)
                 case .lights: LightsPage(show: show)
-                case .scenes: ScenesPage(show: show)
+                case .display: DisplayPage(show: show)
                 case .tiles: TilesPage(show: show)
-                case .autopilot: AutopilotPage(show: show)
+                case .settings: SettingsPage(show: show)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -105,19 +105,7 @@ struct DisplayPage: View {
                     }
                     .frame(width: 260)
                 }
-                Rectangle().fill(Sentia.line).frame(height: 1).padding(.vertical, 32)
-                HStack(alignment: .top, spacing: 48) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SentiaSlider(label: "In time with the speakers", low: .constant(-100), high: $show.trimMs,
-                                     bounds: -100...400, range: false, unit: " ms")
-                        Text("The speakers add \(show.speakerMs) ms; everything is held back to match, plus this.")
-                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
-                    }
-                    .frame(width: 420)
-                    SentiaToggle(title: "Open at login", on: Binding(get: { show.openAtLogin }, set: { show.setOpenAtLogin($0) }))
-                        .padding(.top, 2)
-                }
-                .padding(.bottom, 40)
+                Color.clear.frame(height: 40)
             }
             .padding(.horizontal, 40)
         }
@@ -157,6 +145,7 @@ struct SchemeDots: View {
 // are looks saved to reuse: one click copies a preset into the open light.
 struct LightsPage: View {
     @ObservedObject var show: Show
+    @State private var more = false  // spots, size and direction
 
     private func bind<T>(_ kp: WritableKeyPath<LampLook, T>) -> Binding<T> {
         Binding(get: { show.look[keyPath: kp] }, set: { var l = show.look; l[keyPath: kp] = $0; show.look = l })
@@ -194,19 +183,10 @@ struct LightsPage: View {
                     .padding(.bottom, 32)
                     if let f = show.light { panel(f) }
                 }
-                Text(timingText).font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 36).padding(.bottom, 40)
+                Color.clear.frame(height: 40)
             }
             .padding(.horizontal, 40)
         }
-    }
-
-    private var timingText: String {
-        let t = show.timing
-        var text = "The music reaches the app \(t.captureMs) ms after Spotify plays it, in pieces of \(t.bufferMs) ms; the speakers add \(show.speakerMs) ms."
-        text += " Kicks reach the lamp \(t.lampMs) ms after you hear them."
-        guard show.fixtures.contains(where: { $0.kind == .matter }) else { return text }
-        if t.ahead { return text + " The kicks repeat (\(t.hitPercent)% guessed right), so the bulb gets them ahead, to land as you hear them." }
-        return text + " The bulb \(t.bulbMs) ms; it gets them ahead once 70% of the pattern is guessed right (now \(t.hitPercent)%)."
     }
 
     @ViewBuilder private func panel(_ f: Fixture) -> some View {
@@ -297,7 +277,7 @@ struct LightsPage: View {
             }
         }
         VStack(alignment: .leading, spacing: 26) {
-            if strip {
+            if strip && more {
                 SentiaSlider(label: "Spots", low: bind(\.spotsLow), high: bind(\.spotsHigh), bounds: 1...8, range: true)
                 SentiaSlider(label: "Size", low: bind(\.sizeLow), high: bind(\.sizeHigh), bounds: 1...10, range: true)
             }
@@ -305,6 +285,16 @@ struct LightsPage: View {
             SentiaSlider(label: "Rhythm", low: bind(\.rhythmLow), high: bind(\.rhythmHigh), bounds: 0...100, range: true, unit: "%")
         }
         if strip {
+            Button { withAnimation(.easeOut(duration: 0.15)) { more.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: more ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .light))
+                    Text(more ? "Less" : "More: spots, size, direction").font(.sora(12))
+                }
+                .foregroundColor(Sentia.ink2)
+            }
+            .buttonStyle(.plain)
+        }
+        if strip && more {
             VStack(alignment: .leading, spacing: 12) {
                 SectionLabel(text: "Direction")
                 HStack(spacing: 8) {
@@ -381,71 +371,6 @@ struct BulbDrawing: View {
             .padding(18)
             .background(RoundedRectangle(cornerRadius: 22).fill(Color.black.opacity(0.35)))
             .overlay(RoundedRectangle(cornerRadius: 22).stroke(Sentia.line, lineWidth: 1))
-    }
-}
-
-// MARK: - Scenes
-
-// The whole room saved under a name (each light's look and settings, the display's style), and
-// the phone page.
-struct ScenesPage: View {
-    @ObservedObject var show: Show
-    @State private var sceneName = ""
-    @State private var password = ""
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                PageHeader(title: "Scenes")
-                HStack(alignment: .top, spacing: 56) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        SectionLabel(text: "Scenes").padding(.bottom, 6)
-                        if show.scenes.isEmpty {
-                            Text("None yet. Set the lights up, then save the room here.").font(.soraLight(12)).foregroundColor(Sentia.ink2)
-                        }
-                        ForEach(show.scenes) { sc in
-                            ListRow(title: sc.name, chosen: false, trailing: {
-                                Button { show.deleteScene(sc.id) } label: {
-                                    Image(systemName: "xmark").font(.system(size: 10, weight: .light)).foregroundColor(Sentia.ink2)
-                                }.buttonStyle(.plain)
-                            }) { show.recall(sc.id) }
-                        }
-                        TextField("Scene name", text: $sceneName)
-                            .textFieldStyle(.plain).font(.sora(13))
-                            .padding(.horizontal, 10).frame(height: 32)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Sentia.line, lineWidth: 1))
-                            .padding(.top, 14)
-                        Chip(title: "Save this as a scene", chosen: false) {
-                            show.saveScene(sceneName)
-                            sceneName = ""
-                        }.padding(.top, 8)
-                    }
-                    .frame(width: 300)
-                    VStack(alignment: .leading, spacing: 4) {
-                        SectionLabel(text: "On your phone").padding(.bottom, 8)
-                        Text(show.publicAddress ?? "Not on the web yet").font(.sora(13)).textSelection(.enabled)
-                        Text("At home also \(show.webAddress ?? "—")").font(.soraLight(12)).foregroundColor(Sentia.ink2).textSelection(.enabled).padding(.top, 2)
-                        Text(show.hasPassword ? "Phones sign in with the password set here." : "Set a password before a phone can sign in.")
-                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 10)
-                        SecureField(show.hasPassword ? "New password" : "Password", text: $password)
-                            .textFieldStyle(.plain).font(.sora(13))
-                            .padding(.horizontal, 10).frame(height: 32)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Sentia.line, lineWidth: 1))
-                            .padding(.top, 10)
-                        Text("At least 10 characters.").font(.soraLight(11)).foregroundColor(Sentia.ink2).padding(.top, 4)
-                        HStack(spacing: 8) {
-                            Chip(title: "Set password", chosen: false) {
-                                if show.setPassword(password) { password = "" }
-                            }
-                            Chip(title: "Sign out every phone", chosen: false) { show.signOutPhones() }
-                        }.padding(.top, 8)
-                    }
-                    .frame(width: 320)
-                }
-                .padding(.bottom, 40)
-            }
-            .padding(.horizontal, 40)
-        }
     }
 }
 
@@ -561,148 +486,6 @@ extension RGB {
         if c > 0 { h = mx == r ? ((g - b) / c).truncatingRemainder(dividingBy: 6) : mx == g ? (b - r) / c + 2 : (r - g) / c + 4 }
         h = (h * 60 + degrees + 720).truncatingRemainder(dividingBy: 360)
         return RGB(hue: h, saturation: mx > 0 && c > 0 ? c / mx : 1, value: max(mx, 0.6))
-    }
-}
-
-// MARK: - Autopilot
-
-// A show director: picks the whole rig's look from the music as it goes (Autopilot.swift).
-struct AutopilotPage: View {
-    @ObservedObject var show: Show
-
-    static let styles: [(Autopilot.Style?, String, String)] = [
-        (nil, "Off", "Every light, the display and TILES as you set them."),
-        (.club, "Club", "Follows the song's arc: washes and flows in the breakdowns, grooves in the body, strobes and strikes at the peak, a hard switch on a drop. A new look about every 32 bars or at a new section."),
-        (.lounge, "Lounge", "Slow and evolving: gradients, breathing and washes, the calm visualizers, changing gently every minute or two. Never strobes."),
-        (.rave, "Rave", "Maximal: strikes, chases and sparkles, the bulb strobing, the colour schemes turning over, a new look every 8 bars."),
-    ]
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                PageHeader(title: "Autopilot")
-                HStack(alignment: .top, spacing: 56) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(Self.styles, id: \.1) { s in
-                            Button { show.autopilot = s.0 } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(s.1).font(.sora(15))
-                                    Text(s.2).font(.soraLight(12)).foregroundColor(Sentia.ink2).fixedSize(horizontal: false, vertical: true)
-                                }
-                                .padding(16)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(RoundedRectangle(cornerRadius: 16).fill(show.autopilot == s.0 ? Sentia.panel : Color.clear))
-                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(show.autopilot == s.0 ? Sentia.periwinkle : Sentia.line, lineWidth: show.autopilot == s.0 ? 1.2 : 1))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .frame(width: 420)
-                    VStack(alignment: .leading, spacing: 14) {
-                        if show.autopilot != nil { palettes.padding(.bottom, 22) }
-                        if let s = show.autopilot { macros(s).padding(.bottom, 26) }
-                        SectionLabel(text: "Now")
-                        if show.autopilot == nil {
-                            Text("Off.").font(.soraLight(13)).foregroundColor(Sentia.ink2)
-                        } else if let r = show.liveRecipe {
-                            Text(r.name).font(.exo(22))
-                            Text("The music: \(show.autoTier.rawValue)\(show.timing.playing ? "" : " (paused)")").font(.sora(13))
-                            meter
-                            VStack(alignment: .leading, spacing: 4) {
-                                line("Lamps", "\(r.movement.rawValue.capitalized), speed \(r.speed), \(r.source == .cover ? "the cover's colours" : r.source == .scheme ? "the display's colours" : "own colours")")
-                                line("Bulb", r.bulb.rawValue.capitalized)
-                                line("Display", "\(r.display), \(r.scheme)")
-                                line("TILES", show.tiles.on ? "\(r.tiles)".capitalized : "not taken over (the TILES page)")
-                            }
-                            Text("Drops caught: \(show.pilot.drops)").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
-                        } else {
-                            Text("Waiting for the music.").font(.soraLight(13)).foregroundColor(Sentia.ink2)
-                        }
-                        Text("It lies over your settings and saves nothing: off, everything is as you set it.")
-                            .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 18)
-                    }
-                    .frame(width: 340, alignment: .leading)
-                }
-                .padding(.bottom, 40)
-            }
-            .padding(.horizontal, 40)
-        }
-    }
-
-    // The palette for the whole rig: four, or none picked (each look its own).
-    private var palettes: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "Palette")
-            HStack(spacing: 8) {
-                ForEach(Autopilot.Palette.allCases, id: \.self) { p in
-                    Button { show.palette = show.palette == p ? nil : p } label: {
-                        HStack(spacing: 6) {
-                            swatch(p)
-                            Text(p.name).font(.sora(12.5))
-                        }
-                        .padding(.horizontal, 12).frame(height: 32)
-                        .background(Capsule().fill(show.palette == p ? Sentia.panel : Color.clear))
-                        .overlay(Capsule().stroke(show.palette == p ? Sentia.periwinkle : Sentia.line, lineWidth: 1.2))
-                        .foregroundColor(show.palette == p ? Sentia.inkLight : Sentia.ink2)
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            Text(show.palette == nil ? "None picked: each look brings its own colours." : "Every light, the display and TILES in \(show.palette!.name). Click it again for each look's own.")
-                .font(.soraLight(11)).foregroundColor(Sentia.ink2)
-        }
-    }
-
-    @ViewBuilder private func swatch(_ p: Autopilot.Palette) -> some View {
-        if p == .cover {
-            Image(systemName: "photo").font(.system(size: 10, weight: .light))
-        } else if let i = schemes.firstIndex(of: p.scheme), i > 0, i <= schemeLampColours.count {
-            HStack(spacing: 2) {
-                ForEach(Array(schemeLampColours[i - 1].prefix(3).enumerated()), id: \.offset) { _, c in
-                    Circle().fill(c.color).frame(width: 8, height: 8)
-                }
-            }
-        }
-    }
-
-    // The style's four macros: each a slider with what it does.
-    private func macros(_ s: Autopilot.Style) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            SectionLabel(text: "\(s.rawValue.capitalized) macros")
-            ForEach(Array((Autopilot.macroNames[s] ?? []).enumerated()), id: \.offset) { i, m in
-                VStack(alignment: .leading, spacing: 4) {
-                    SentiaSlider(label: m.0, low: .constant(0), high: Binding(
-                        get: { show.macros[s.rawValue]?[i] ?? 50 },
-                        set: { v in
-                            var all = show.macros
-                            var four = all[s.rawValue] ?? [50, 50, 50, 50]
-                            four[i] = v
-                            all[s.rawValue] = four
-                            show.macros = all
-                        }), bounds: 0...100, range: false)
-                    Text(m.1).font(.soraLight(11)).foregroundColor(Sentia.ink2)
-                }
-            }
-        }
-    }
-
-    private var meter: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Sentia.line).frame(height: 3)
-                Capsule().fill(Sentia.periwinkle).frame(width: g.size.width * min(1, show.timing.energy * 1.4), height: 3)
-            }
-        }
-        .frame(height: 6)
-    }
-
-    private func line(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label).font(.sora(12)).foregroundColor(Sentia.ink2).frame(width: 64, alignment: .leading)
-            Text(value).font(.sora(12.5))
-        }
     }
 }
 

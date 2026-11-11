@@ -232,6 +232,23 @@ of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** 
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 - **Off:** the card's normal solid background, even with the app running.
 
+### The Live page
+
+The app opens on **Live**, laid out like a lighting desk, the whole show on one page: what's
+connected (display, each light, TILES), the music (tempo, the moment the autopilot reads, level,
+a lamp on each kick), the desk, the autopilot and the scenes. The other pages (Lights, Display,
+TILES) are for setting things up; **Settings** holds the phone remote, the timing trim and
+"Open at login".
+
+- **Master** scales every light's brightness and TILES'.
+- **Blackout** puts every light and TILES out until pressed again; the show keeps running
+  underneath.
+- **Flash** is held: every light white at full while the button is down. From a phone it lets go
+  by itself after 5 s, in case the release is lost.
+- **Freeze** holds the autopilot on its current look (only with the autopilot on).
+- **Scenes** are pads: click one to recall the room, **+** saves the room as it is now (every
+  light's look and settings, the display's style) under a name, right-click deletes.
+
 ### Lights and Scenes
 
 Lights come along from the same analysis as the display, not a microphone. The **Lights** page
@@ -247,7 +264,7 @@ keeps colours, how often they change, and rhythm. **Presets** are looks saved to
 copies one into the open light, "Save as a preset" keeps the light's look, "Same on every light"
 copies it to the rest.
 
-The **Autopilot** page hands the room to a show director that reads the music once a second (its
+The **Autopilot** (on the Live page) hands the room to a show director that reads the music once a second (its
 loudness against the song's own quiet and loud parts, its character changes, the beat) and picks
 a whole-rig look from its style's pool: the lamps' movement and colours, the bulb's style, the
 display's visualizer and scheme (and TILES' animation when taken over). **Club** follows the song's
@@ -259,9 +276,7 @@ depth, drift; Rave: intensity, pace, chaos, strobe), 50 leaving its looks as the
 palette can be picked for the whole rig: Cover, Sentia, Ice or Sunset (none: each look its own).
 It lies over the settings and saves nothing; off, everything is as it was.
 
-The **Scenes** page saves the whole room (every light's look and settings, the display's style)
-under a name, called back with one click. Everything lives in
-`~/Library/Application Support/Show Control`.
+Scenes, presets and settings live in `~/Library/Application Support/Show Control`.
 
 - **Govee** lamps are streamed a colour per segment (all 14 on the H6076). Turn on **LAN Control**
   for the lamp in the Govee Home app; the app finds it by itself.
@@ -289,10 +304,11 @@ every light the show still has goes back to its own colour and brightness.
 kept in `~/Library/Logs/Show Control/display.log`: each song, each cover (downloaded or from the
 prefetch, how long it took, the memory and stack left), every 30 s the render timing.
 
-**On a phone:** the app serves a remote on port 8770: the autopilot first (its style, what it's
-running, Next look, the palette and macros, lights and TILES on or off), then Lights, Scenes and
-Display. Set a
-password on the Scenes page (10 characters or more); a phone signs in once and keeps a long random
+**On a phone:** the app serves a remote on port 8770. Its **Live** tab is the on-the-go desk: tempo
+and moment, the level, Master, Blackout, Flash and Freeze, then the autopilot (its style, what it's
+running, Next look, the palette and macros), the scene pads and lights and TILES on or off; then
+Lights, Scenes and Display. Set a
+password on the Settings page (10 characters or more); a phone signs in once and keeps a long random
 key (the Mac keeps only its hash). Five wrong tries lock sign-in for 30 s, doubling each time;
 "Sign out every phone" or a new password drops every key. In Safari, Share > Add to Home Screen
 makes it an app.

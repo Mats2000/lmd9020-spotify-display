@@ -9,9 +9,9 @@ let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava", "Rave", "Fractal
 let schemes = ["Cover Colours", "Sentia", "Ice", "Amber", "Soft Club"]  // ColourScheme order
 
 final class Show: ObservableObject {
-    enum Page: String, CaseIterable { case display = "Display", lights = "Lights", autopilot = "Autopilot", scenes = "Scenes", tiles = "TILES" }
+    enum Page: String, CaseIterable { case live = "Live", lights = "Lights", display = "Display", tiles = "TILES", settings = "Settings" }
 
-    @Published var page: Page = Page(rawValue: UserDefaults.standard.string(forKey: "page") ?? "") ?? .display {
+    @Published var page: Page = Page(rawValue: UserDefaults.standard.string(forKey: "page") ?? "") ?? .live {
         didSet { UserDefaults.standard.set(page.rawValue, forKey: "page"); wantFrames() }
     }
     @Published var styleName: String { didSet { UserDefaults.standard.set(styleName, forKey: "styleName"); applyStyle() } }
@@ -52,6 +52,26 @@ final class Show: ObservableObject {
         }
     }
     @Published var autoRecipe: Autopilot.Recipe?
+    // The desk: a master over every light's brightness (kept), Blackout, Flash while held, and
+    // Freeze for the autopilot's look (none kept: a restart never comes up dark or frozen).
+    @Published var master: Int = UserDefaults.standard.object(forKey: "master") as? Int ?? 100 {
+        didSet { UserDefaults.standard.set(master, forKey: "master"); pushPlan(); applyTiles() }
+    }
+    @Published var blackout = false { didSet { pushPlan(); applyTiles() } }
+    @Published var flash = false { didSet { pushPlan() } }
+    // Flash from a phone: let go after 5 s on its own, in case the phone loses the connection mid-hold.
+    func phoneFlash(_ on: Bool) {
+        flash = on
+        guard on else { return }
+        let at = Date()
+        flashAt = at
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            if self?.flashAt == at { self?.flash = false }
+        }
+    }
+    private var flashAt = Date.distantPast
+    @Published var freeze = false { didSet { pilot.frozen = freeze } }
+    @Published var kicks = 0  // counts up on each kick (the kick lamp)
     // Each style's four macros (Autopilot.macroNames), 0-100.
     @Published var macros: [String: [Int]] {
         didSet {
@@ -143,6 +163,7 @@ final class Show: ObservableObject {
                 if self.autoTier != self.pilot.tier { self.autoTier = self.pilot.tier }
             }
         }
+        rig.onKickHeard = { [weak self] in self?.kicks &+= 1 }
         pilot.onChange = { [weak self] r in
             guard let self, self.autopilot != nil else { return }
             self.autoRecipe = r
@@ -214,6 +235,8 @@ final class Show: ObservableObject {
                 t.accent = c[min(2, c.count - 1)]
             }
         }
+        t.brightness = blackout ? 0 : t.brightness * master / 100
+        if blackout { t.glow = .off }
         rig.tiles.set(t)
     }
 
@@ -365,7 +388,7 @@ final class Show: ObservableObject {
     // MARK: Venue
 
     private func wantFrames() {
-        rig.wantsFrames = (windowVisible && (page == .lights || page == .scenes)) || Date().timeIntervalSince(phoneWatching) < 5
+        rig.wantsFrames = (windowVisible && page == .lights) || Date().timeIntervalSince(phoneWatching) < 5
     }
 
     // The lights found so far, each with its saved settings.
@@ -461,6 +484,15 @@ final class Show: ObservableObject {
         p.preview = look
         p.previewSegments = light.map { $0.kind == .govee ? $0.segments : 1 } ?? 14
         p.lampsOn = lampsOn
+        p.blackout = blackout
+        p.flash = flash
+        if master < 100 {
+            p.fixtures = p.fixtures.map { f in
+                var f = f
+                f.settings.brightness = f.settings.brightness * master / 100
+                return f
+            }
+        }
         rig.set(p)
     }
 }

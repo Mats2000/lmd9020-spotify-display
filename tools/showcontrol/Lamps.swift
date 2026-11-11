@@ -568,6 +568,12 @@ final class MatterLights {
 
     func colour(_ id: String, _ c: RGB, fade: Double) { send(["id": id, "r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "fade": fade]) }
     func level(_ id: String, _ level: Double, fade: Double) { send(["id": id, "level": level, "fade": fade]) }
+    // Colour and level in one command (so neither is dropped as the older of two waiting).
+    func look(_ id: String, _ c: RGB, level: Double, fade: Double) {
+        send(["id": id, "r": Int(c.r), "g": Int(c.g), "b": Int(c.b), "level": level, "fade": fade])
+    }
+    // Off at once, no fade (Blackout); the show's own, not someone else's.
+    func off(_ id: String) { send(["id": id, "off": true]) }
     // Straight to `level`, then down to `then` over `fall` seconds as soon as the light has it, or
     // with `off` straight off (no fade), for a strobe on a bulb that only dims slowly.
     func kick(_ id: String, level: Double, then: Double, fall: Double, off: Bool = false) {

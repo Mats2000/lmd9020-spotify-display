@@ -221,7 +221,8 @@ extension Show {
                     ["name": m.0, "about": m.1, "value": macros[s.rawValue]?[i] ?? 50] as [String: Any]
                 }
             } ?? [],
-            "energy": timing.energy, "playing": timing.playing, "tilesOn": tiles.on, "tilesName": tilesName ?? "",
+            "energy": timing.energy, "playing": timing.playing, "master": master, "blackout": blackout,
+            "flash": flash, "freeze": freeze, "bpm": timing.period > 0.25 ? Int((60 / timing.period).rounded()) : 0, "tilesOn": tiles.on, "tilesName": tilesName ?? "",
             "autoParts": liveRecipe.map { r in
                 ["lamps": "\(r.movement.rawValue.capitalized), speed \(r.speed)", "bulb": r.bulb.rawValue.capitalized,
                  "display": "\(r.display), \(r.scheme)", "tiles": tiles.on ? "\(r.tiles)".capitalized : ""]
@@ -256,6 +257,10 @@ extension Show {
                 macros[s.rawValue] = four
             }
         case "nextLook": if autopilot != nil { pilot.next() }
+        case "master": if let v = a["value"] as? Int { master = max(0, min(100, v)) }
+        case "blackout": if let on = a["on"] as? Bool { blackout = on }
+        case "flash": if let on = a["on"] as? Bool { phoneFlash(on) }
+        case "freeze": if let on = a["on"] as? Bool { freeze = on }
         case "tiles": if let on = a["on"] as? Bool { tiles.on = on }
         case "display":
             if let s = a["style"] as? String, s == "Shuffle" || s == "Off" || styles.contains(s) { styleName = s }

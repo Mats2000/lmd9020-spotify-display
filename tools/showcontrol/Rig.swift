@@ -12,6 +12,9 @@ final class Rig {
         var preview = LampLook.builtIn[0]  // the look open on the Lights page
         var previewSegments = 14
         var lampsOn = true
+        // The desk's overrides: every light dark, or every light white while held.
+        var blackout = false
+        var flash = false
     }
     struct Timing: Equatable {
         var captureMs = 0, bufferMs = 0
@@ -32,6 +35,7 @@ final class Rig {
     var onFrames: (([String: [RGB]], [RGB]) -> Void)?  // each light's colours now, and the open look's preview
     var onHeld: ((String) -> Void)?                     // someone else took this light
     var onTiming: ((Timing) -> Void)?
+    var onKickHeard: (() -> Void)?  // each kick, on the main queue: the Live page's kick lamp
     var wantsFrames = false
 
     private let analyzer: Analyzer
@@ -197,6 +201,7 @@ final class Rig {
             }
             self.guesses.removeAll { abs($0.at - heard) < 0.05 }
             if !covered { self.flashAll(strength, heard: heard) }
+            DispatchQueue.main.async { self.onKickHeard?() }
             self.tilesKick(strength, heard: heard)
             self.heardKicks.removeAll { heard - $0 > 8 }
             self.heardKicks.append(heard)
@@ -291,6 +296,7 @@ final class Rig {
     }
 
     private func flash(_ f: Fixture, _ strength: Float) {
+        guard !plan.blackout, !plan.flash else { return }
         let amount = Double(f.settings.kick) / 100
         // A Matter bulb takes a kick as two commands of a round trip each: closer together than about
         // two round trips and they queue in it, run together (it looks like fading) and fall behind.
@@ -327,10 +333,26 @@ final class Rig {
 
     // MARK: Frames
 
-    private func send(_ f: Fixture, _ frame: [RGB]) {
-        let colours = frame.map { $0.scaled(Double(f.settings.brightness) / 100) }
+    private func send(_ f: Fixture, _ frame: [RGB], raw: Bool = false) {
+        let colours = raw ? frame : frame.map { $0.scaled(Double(f.settings.brightness) / 100) }
         govee.show(colours, to: f.address)
         live[f.id] = colours
+    }
+
+    // Blackout (black) or Flash (white), over the look: the lamp streams it every tick, the bulb
+    // gets it once (off with no fade, or white at full).
+    private var overridden: [String: Bool] = [:]  // fixture: white?
+    private func override(_ f: Fixture, white: Bool) {
+        switch f.kind {
+        case .govee:
+            let c = white ? RGB(255, 255, 255) : .black
+            send(f, [RGB](repeating: c, count: f.segments), raw: true)
+        case .matter:
+            guard overridden[f.id] != white else { break }
+            if white { matter.look(f.address, RGB(255, 255, 255), level: 1, fade: 0) } else { matter.off(f.address) }
+            live[f.id] = [white ? RGB(255, 255, 255) : .black]
+        }
+        overridden[f.id] = white
     }
 
     private func start(_ f: Fixture) {
@@ -372,6 +394,15 @@ final class Rig {
                 continue
             }
             if driving.insert(f.id).inserted { start(f) }
+            if plan.blackout || plan.flash {
+                override(f, white: plan.flash && !plan.blackout)
+                continue
+            }
+            if overridden.removeValue(forKey: f.id) != nil {  // back from an override: the look's colour and level again
+                matterColour[f.id] = nil
+                matterLevel[f.id] = nil
+                lastStep[f.id] = -1
+            }
             let e = engine(for: f), l = f.settings.look
             e.look = l
             e.palette = palette(for: l)
