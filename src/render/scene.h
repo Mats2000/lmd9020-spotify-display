@@ -28,6 +28,7 @@ struct NowPlaying {
         int8_t wave[64] = {};      // the waveform, about 5 ms of it
         bool active = false;       // music is playing there
         uint32_t atMs = 0;         // millis() when the last update arrived; 0 = never
+        uint32_t flashUntil = 0;   // millis() the Mac's Flash holds the screen white until; 0 = not
     } audio;
 };
 

@@ -141,6 +141,9 @@ struct LivePage: View {
                     ForEach(Autopilot.Palette.allCases, id: \.self) { p in
                         Chip(title: p.name, chosen: show.palette == p) { show.palette = show.palette == p ? nil : p }
                     }
+                    Swatches(colours: Binding(get: { [show.paletteColour] }, set: { show.paletteColour = $0[0] }), fixed: true) {
+                        show.palette = .single
+                    }
                 }
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 22), GridItem(.flexible())], alignment: .leading, spacing: 18) {
                     ForEach(Array((Autopilot.macroNames[style] ?? []).enumerated()), id: \.offset) { i, m in

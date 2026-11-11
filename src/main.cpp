@@ -235,8 +235,14 @@ void loop() {
     uint32_t start = micros();
     stage = STAGE_DRAWING;
     scene.render(canvas, np, clock, millis());
-    showCoverPalette(scene.coverRegion());
-    showGlowPalette(scene.glowRegion());
+    if (np.audio.flashUntil && (int32_t)(np.audio.flashUntil - millis()) > 0) {
+        canvas.fill(0xFF);  // white, with the cover's and the glow's palettes off
+        ESP_8_BIT_composite::setRegion(0, 0, 0, 0, nullptr);
+        ESP_8_BIT_composite::setBand(0, 0, nullptr);
+    } else {
+        showCoverPalette(scene.coverRegion());
+        showGlowPalette(scene.glowRegion());
+    }
 
     // Over two fields (33 ms) drops a frame.
     static uint32_t slowest = 0, total = 0, frames = 0, overBudget = 0, lastReport = 0;

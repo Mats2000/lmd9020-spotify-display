@@ -164,7 +164,7 @@ function show(s) {
   state = s;
   const f = current(s), l = f && f.look;
   const k = [tab, s.fixtures.map(x => x.id + x.held + x.on + x.name + x.look.name + x.preset).join(), s.presets.map(p => p.id + p.name).join(),
-    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick, f.bulb].join(), s.autopilot, s.autoLook, s.palette,
+    s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick, f.bulb].join(), s.autopilot, s.autoLook, s.palette, s.paletteColour,
     (s.macros || []).map(m => m.value).join(), s.tilesOn, s.master, s.blackout, s.flash, s.freeze, l && JSON.stringify(l, Object.keys(l).sort()), s.style, s.scheme, s.lampsOn].join("|");
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === tab);
   if (k !== shape) { shape = k; render(s); return; }
@@ -183,7 +183,7 @@ const momentText = s => (s.playing ? esc((s.autoTier || "").replace(/^./, c => c
 
 const PILOTS = [["off", "Off", "Everything as you set it"], ["club", "Club", "Follows the song's arc, hits on drops"],
   ["lounge", "Lounge", "Slow, evolving, never strobes"], ["rave", "Rave", "Maximal, a new look every 8 bars"]];
-const PALETTES = [["cover", "Cover"], ["sentia", "Sentia"], ["ice", "Ice"], ["sunset", "Sunset"]];
+const PALETTES = [["cover", "Cover"], ["sentia", "Sentia"], ["ice", "Ice"], ["sunset", "Sunset"], ["single", "One colour"]];
 
 // The control centre: the autopilot first, then the quick switches.
 function autopilotTab(s) {
@@ -200,7 +200,7 @@ function autopilotTab(s) {
 `;
     if (p.lamps) h += `<dl class="parts"><dt>Lamps</dt><dd>${esc(p.lamps)}</dd><dt>Bulb</dt><dd>${esc(p.bulb)}</dd><dt>Display</dt><dd>${esc(p.display)}</dd>${p.tiles ? `<dt>TILES</dt><dd>${esc(p.tiles)}</dd>` : ""}</dl>`;
     h += `<button class="btn wide" ${data({ action: "nextLook" })}>Next look</button></div>`;
-    h += `<h2>Palette</h2><div class="chips">${PALETTES.map(([k, n]) => chip(n, s.palette === k, { action: "autopilot", palette: s.palette === k ? "" : k })).join("")}</div>`;
+    h += `<h2>Palette</h2><div class="chips">${PALETTES.map(([k, n]) => chip(n, s.palette === k, { action: "autopilot", palette: s.palette === k ? "" : k })).join("")}<div class="sw"><input type="color" id="paletteColour" value="${s.paletteColour || "#ff00ff"}"></div></div>`;
     h += `<h2>Macros</h2>`;
     (s.macros || []).forEach((m, i) => {
       h += slider(esc(m.name), "value", m.value, 0, 100, "", { action: "macro", index: i }) + `<p class="macro-about">${esc(m.about)}</p>`;
@@ -224,9 +224,9 @@ function lightsTab(s) {
   if (f.held) {
     return h + `<div class="row" style="margin-top:14px"><span class="grow held-note">Alexa has it. The show leaves it alone.</span><button class="btn small" ${data({ action: "take", id })}>Take back</button></div>`;
   }
-  if (!strip_) h += `<h2>Style</h2><div class="chips">${[["strobe", "Strobe"], ["pulse", "Pulse"], ["wash", "Wash"]].map(([k, n]) => chip(n, f.bulb === k, { action: "fixture", id, bulb: k })).join("")}</div>`;
+  if (!strip_) h += `<h2>Style</h2><div class="chips">${[["strobe", "Strobe"], ["pulse", "Pulse"], ["wash", "Wash"], ["drift", "Drift"]].map(([k, n]) => chip(n, f.bulb === k, { action: "fixture", id, bulb: k })).join("")}</div>`;
   h += slider("Brightness", "brightness", f.brightness, 0, 100, "%", { action: "fixture", id });
-  if (strip_ || f.bulb !== "wash") h += slider("Kick", "kick", f.kick, 0, 150, "%", { action: "fixture", id });
+  if (strip_ || f.bulb !== "wash" && f.bulb !== "drift") h += slider("Kick", "kick", f.kick, 0, 150, "%", { action: "fixture", id });
   if (strip_) h += `<h2>Movement</h2><div class="chips">${s.movements.map(m => chip(cap(m), m === l.movement, { ...base, movement: m })).join("")}</div>`;
   h += `<h2>Colours</h2><div class="chips">${s.sources.map(m => chip(SOURCE[m], m === l.source, { ...base, source: m })).join("")}</div>`;
   {
@@ -289,6 +289,7 @@ app.addEventListener("input", e => {
 app.addEventListener("change", e => {
   const t = e.target, f = state && current(state);
   if (t.dataset.key) return act({ ...JSON.parse(t.dataset.base), [t.dataset.key]: +t.value });
+  if (t.id === "paletteColour") return act({ action: "autopilot", palette: "single", colour: t.value });
   if (t.dataset.colour !== undefined) { const cs = f.look.colours.slice(); cs[+t.dataset.colour] = t.value; return act({ action: "look", id: f.id, source: "own", colours: cs }); }
   if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: f.id, name: t.value.trim() });
 });

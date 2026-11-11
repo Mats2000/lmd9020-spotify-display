@@ -58,7 +58,22 @@ final class Show: ObservableObject {
         didSet { UserDefaults.standard.set(master, forKey: "master"); pushPlan(); applyTiles() }
     }
     @Published var blackout = false { didSet { pushPlan(); applyTiles() } }
-    @Published var flash = false { didSet { pushPlan() } }
+    @Published var flash = false { didSet { pushPlan(); applyTiles(); flashOthers() } }
+    private var flashTimer: Timer?
+    // The display and TILES go white too, told again every 50 ms while held: each lets go by
+    // itself soon after the last (the display in 0.4 s, TILES as its hit fades).
+    private func flashOthers() {
+        flashTimer?.invalidate()
+        flashTimer = nil
+        let link = link, tiles = rig.tiles, on = flash
+        link.send(Array("LMDF".utf8) + [on ? 1 : 0])
+        tiles.flash(on)
+        guard on else { return }
+        flashTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            link.send(Array("LMDF".utf8) + [1])
+            tiles.flash(true)
+        }
+    }
     // Flash from a phone: let go after 5 s on its own, in case the phone loses the connection mid-hold.
     func phoneFlash(_ on: Bool) {
         flash = on
@@ -83,12 +98,20 @@ final class Show: ObservableObject {
     @Published var palette: Autopilot.Palette? {
         didSet { UserDefaults.standard.set(palette?.rawValue, forKey: "autopilotPalette"); applyAutopilot() }
     }
+    @Published var paletteColour = RGB(255, 0, 255) {
+        didSet {
+            UserDefaults.standard.set(paletteColour.hex, forKey: "autopilotColour")
+            if palette == .single { applyAutopilot() }
+        }
+    }
     // What's running, as the macros turn it, in the palette if one's picked.
     var liveRecipe: Autopilot.Recipe? {
         guard var r = autoRecipe.map(pilot.tuned) else { return nil }
-        if let p = palette {
-            r.source = p == .cover ? .cover : .scheme
-            r.scheme = p.scheme
+        switch palette {
+        case nil: break
+        case .cover?: r.source = .cover; r.scheme = Autopilot.Palette.cover.scheme
+        case .single?: r.source = .own; r.scheme = nearestScheme(paletteColour)
+        case let p?: r.source = .scheme; r.scheme = p.scheme
         }
         return r
     }
@@ -127,6 +150,7 @@ final class Show: ObservableObject {
         selected = d.string(forKey: "light")
         let style = d.string(forKey: "autopilot").flatMap(Autopilot.Style.init)
         palette = d.string(forKey: "autopilotPalette").flatMap(Autopilot.Palette.init)
+        paletteColour = d.string(forKey: "autopilotColour").flatMap(RGB.init(hex:)) ?? RGB(255, 0, 255)
         let savedMacros = d.dictionary(forKey: "autopilotMacros") as? [String: [Int]] ?? [:]
         macros = savedMacros
         pilot = Autopilot(style: style ?? .club)
@@ -234,9 +258,15 @@ final class Show: ObservableObject {
                 t.second = c[min(1, c.count - 1)]
                 t.accent = c[min(2, c.count - 1)]
             }
+            if palette == .single { (t.main, t.second, t.accent) = (paletteColour, paletteColour, paletteColour) }
         }
         t.brightness = blackout ? 0 : t.brightness * master / 100
         if blackout { t.glow = .off }
+        if flash {
+            let white = RGB(255, 255, 255)
+            (t.on, t.animation, t.glow, t.brightness) = (true, .pulse, .white, 100)
+            (t.main, t.second, t.accent) = (white, white, white)
+        }
         rig.tiles.set(t)
     }
 
@@ -470,6 +500,12 @@ final class Show: ObservableObject {
                 l.movement = r.movement
                 l.speed = r.speed
                 l.source = r.source
+                if palette == .single { l.colours = [paletteColour] }
+                // Lounge: the bulb drifts through warm hues unless a palette of its own is picked.
+                if autopilot == .lounge, f.kind == .matter, palette == nil || palette == .cover {
+                    l.source = .own
+                    l.colours = Rig.warmDrift
+                }
                 l.direction = r.direction
                 l.rhythmLow = r.rhythm.0
                 l.rhythmHigh = r.rhythm.1
@@ -495,4 +531,20 @@ final class Show: ObservableObject {
         }
         rig.set(p)
     }
+}
+
+// The display can't take any colour, only its schemes: the one whose colours sit nearest in hue.
+private func nearestScheme(_ c: RGB) -> String {
+    func hue(_ c: RGB) -> Double {
+        let r = Double(c.r), g = Double(c.g), b = Double(c.b), mx = max(r, g, b), d = mx - min(r, g, b)
+        guard d > 0 else { return 0 }
+        let h = mx == r ? (g - b) / d : mx == g ? (b - r) / d + 2 : (r - g) / d + 4
+        return (h * 60 + 360).truncatingRemainder(dividingBy: 360)
+    }
+    func apart(_ a: Double, _ b: Double) -> Double { let d = abs(a - b); return min(d, 360 - d) }
+    let h = hue(c)
+    let best = schemeLampColours.indices.min { i, j in
+        schemeLampColours[i].map { apart(hue($0), h) }.min()! < schemeLampColours[j].map { apart(hue($0), h) }.min()!
+    }
+    return schemes[(best ?? 0) + 1]
 }

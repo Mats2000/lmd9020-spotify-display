@@ -181,7 +181,7 @@ final class Rig {
     private func level(_ f: Fixture) -> Double {
         let l = f.settings.look, k = Double(f.settings.kick) / 100
         let base = (Double(l.rhythmLow) + Double(l.rhythmHigh - l.rhythmLow) * 0.45 * min(1, energy * 1.5)) / 100
-        return base * Double(f.settings.brightness) / 100 * (k > 1 && f.settings.bulbStyle != .wash ? max(0.15, 1 - (k - 1) * 1.4) : 1)
+        return base * Double(f.settings.brightness) / 100 * (k > 1 && f.settings.bulbStyle != .wash && f.settings.bulbStyle != .drift ? max(0.15, 1 - (k - 1) * 1.4) : 1)
     }
 
     // MARK: Kicks
@@ -310,7 +310,7 @@ final class Rig {
             send(f, e.frame(dt: 0, energy: energy))
         case .matter:
             let style = f.settings.bulbStyle
-            guard amount > 0, style != .wash else { return }
+            guard amount > 0, style != .wash, style != .drift else { return }
             let l = f.settings.look, top = Double(l.rhythmHigh) / 100 * Double(f.settings.brightness) / 100
             let base = level(f), high = min(1, base + (top - base) * min(1, amount))
             // Strobe: straight off after the flash. Pulse: down to the base over most of the beat,
@@ -449,6 +449,7 @@ final class Rig {
         _ = e.frame(dt: dt, energy: energy)
         let l = f.settings.look, base = level(f), id = f.address
         if f.settings.bulbStyle == .wash { return washMatter(f, e, now: now) }
+        if f.settings.bulbStyle == .drift { return driftMatter(f, e, now: now) }
         let strobe = f.settings.bulbStyle == .strobe  // only hard changes: kicks, and colours landing while it's off
         let every = [8, 4, 2, 1, 1][max(0, min(4, l.speed - 1))]
         let step = l.bySong ? songStep : e.beats / every
@@ -473,6 +474,24 @@ final class Rig {
     // Wash: no kicks. Every ~0.8 s the bulb fades (over about as long) to the music's energy, and to
     // a colour along the look's colours by the sound's character: the first when it's bass-heavy,
     // the last when it's bright; each change of the song's character moves them along by one.
+    static let warmDrift = [RGB(255, 140, 40), RGB(255, 100, 55), RGB(255, 175, 95), RGB(255, 115, 90), RGB(255, 195, 125)]
+
+    // Drift: one colour sliding into the next (a minute each at speed 1), low and barely moving
+    // with the music; a command every 3 s, the bulb's own fade joining them up.
+    private func driftMatter(_ f: Fixture, _ e: LampEngine, now: Date) {
+        guard now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 3 else { return }
+        levelAt[f.id] = now
+        let colours = e.palette.isEmpty ? Rig.warmDrift : e.palette
+        let at = now.timeIntervalSinceReferenceDate / (60 / Double(max(1, f.settings.look.speed)))
+        let k = Int(at) % colours.count
+        let c = RGB.mix(colours[k], colours[(k + 1) % colours.count], at - at.rounded(.down))
+        let glow = (0.28 + 0.14 * min(1, energy * 1.4)) * Double(f.settings.brightness) / 100
+        matterColour[f.id] = c
+        matterLevel[f.id] = glow
+        matter.look(f.address, c, level: glow, fade: 3.2)
+        live[f.id] = [c.scaled(glow)]
+    }
+
     private func washMatter(_ f: Fixture, _ e: LampEngine, now: Date) {
         guard now.timeIntervalSince(levelAt[f.id] ?? .distantPast) > 0.8 else { return }
         levelAt[f.id] = now

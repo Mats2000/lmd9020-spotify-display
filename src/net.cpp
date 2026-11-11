@@ -375,6 +375,12 @@ void vizTask(void*) {
             }
             continue;
         }
+        if (len == 5 && memcmp(buf, "LMDF", 4) == 0) {  // the Mac's Flash, resent every 50 ms while held
+            xSemaphoreTake(lock, portMAX_DELAY);
+            shared.audio.flashUntil = buf[4] ? (millis() + 400) | 1 : 0;
+            xSemaphoreGive(lock);
+            continue;
+        }
         if (len >= 24 && memcmp(buf, "LMDV", 4) == 0 && buf[4] == 1) {
             logTo(from.sin_addr.s_addr);
             xSemaphoreTake(lock, portMAX_DELAY);

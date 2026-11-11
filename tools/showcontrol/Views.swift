@@ -212,7 +212,7 @@ struct LightsPage: View {
                     if f.kind == .matter { bulbStyle(f) }
                     VStack(alignment: .leading, spacing: 26) {
                         SentiaSlider(label: "Brightness", low: .constant(0), high: setting(\.brightness), bounds: 0...100, range: false, unit: "%")
-                        if f.kind != .matter || f.settings.bulbStyle != .wash {
+                        if f.kind != .matter || f.settings.bulbStyle != .wash && f.settings.bulbStyle != .drift {
                             SentiaSlider(label: "Kick", low: .constant(0), high: setting(\.kick), bounds: 0...150, range: false, unit: "%")
                         }
                     }
@@ -228,6 +228,7 @@ struct LightsPage: View {
         (.strobe, "Strobe", "A hard flash on each kick, straight off between them. Best on sparse beats."),
         (.pulse, "Pulse", "Up on each kick, fading back down through the beat: the bulb's slow fade as the shape."),
         (.wash, "Wash", "No kicks: brightness with the music's energy, colour along the look's colours with how bright or bassy it sounds, in long fades."),
+        (.drift, "Drift", "No kicks: one colour sliding slowly into the next (warm hues unless the look has its own), kept low and cozy."),
     ]
 
     private func bulbStyle(_ f: Fixture) -> some View {

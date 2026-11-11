@@ -6,7 +6,7 @@ import Foundation
 // How a single bulb (a Matter light) plays the music: it only fades slowly, so it can flash hard
 // on the kicks and go straight off between them, swell on each kick and fade through the beat, or
 // leave the kicks and follow the music's energy and character in long fades.
-enum BulbStyle: String, Codable, CaseIterable { case strobe, pulse, wash }
+enum BulbStyle: String, Codable, CaseIterable { case strobe, pulse, wash, drift }
 
 struct FixtureSettings: Codable, Equatable {
     var on = true

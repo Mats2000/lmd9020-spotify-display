@@ -36,6 +36,7 @@ final class TilesLink {
     private var mode = Mode()
     private var modeSentAt = Date.distantPast
     private var accent: UInt8 = 0
+    private var flashing = false  // every frame a full kick: pads and underglow held white
 
     init() {
         MIDIClientCreateWithBlock("Show Control" as CFString, &client) { [weak self] _ in self?.find() }
@@ -111,7 +112,14 @@ final class TilesLink {
         let a = accent
         accent = 0
         lock.unlock()
-        send([0x02, Self.seven(Double(kick)), a, Self.seven(level)] + six)
+        send([0x02, flashing ? 127 : Self.seven(Double(kick)), a, Self.seven(level)] + six)
+    }
+
+    func flash(_ on: Bool) {
+        lock.lock()
+        flashing = on
+        lock.unlock()
+        if on { frame(kick: 1, level: 1, bands: []) }
     }
 
     func noteAccent(_ strength: Float) {

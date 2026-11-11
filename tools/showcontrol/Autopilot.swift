@@ -11,9 +11,9 @@ final class Autopilot {
     enum Tier: String { case calm, groove, peak }
     // A palette for the whole rig, or none (each look its own colours). scheme: the display's.
     enum Palette: String, CaseIterable, Codable {
-        case cover, sentia, ice, sunset
-        var name: String { ["Cover", "Sentia", "Ice", "Sunset"][Self.allCases.firstIndex(of: self)!] }
-        var scheme: String { ["Cover Colours", "Sentia", "Ice", "Amber"][Self.allCases.firstIndex(of: self)!] }
+        case cover, sentia, ice, sunset, single  // single: Show.paletteColour
+        var name: String { ["Cover", "Sentia", "Ice", "Sunset", "One colour"][Self.allCases.firstIndex(of: self)!] }
+        var scheme: String { ["Cover Colours", "Sentia", "Ice", "Amber", "Cover Colours"][Self.allCases.firstIndex(of: self)!] }
     }
 
     struct Recipe: Equatable {
@@ -238,11 +238,11 @@ final class Autopilot {
         case (.lounge, .calm), (.lounge, .groove), (.lounge, .peak):
             let warm = t == .peak ? 3 : 1
             return [
-                Recipe(name: "Slow bloom", movement: .gradient, speed: warm, source: .cover, rhythm: (40, 85), bulb: .wash, kick: 40, display: "Lava", scheme: "Cover Colours", tiles: .ripple, glow: .second),
-                Recipe(name: "Tide", movement: .flow, speed: warm, source: .scheme, rhythm: (35, 80), bulb: .wash, kick: 40, display: "Fractal", scheme: "Soft Club", tiles: .spectrum, glow: .second),
-                Recipe(name: "Breath", movement: .flexing, speed: 1, source: .cover, rhythm: (30, 80), bulb: .wash, kick: 30, display: "Classic Glow", scheme: "Cover Colours", tiles: .meter, glow: .main),
-                Recipe(name: "Amber room", movement: .gradient, speed: 1, source: .scheme, rhythm: (40, 75), bulb: .wash, kick: 30, display: "Lava", scheme: "Amber", tiles: .ripple, glow: .main),
-                Recipe(name: "Ice drift", movement: .flow, speed: 2, source: .scheme, direction: .inward, rhythm: (35, 80), bulb: t == .peak ? .pulse : .wash, kick: 60, display: "Fractal", scheme: "Ice", tiles: .spectrum, glow: .second),
+                Recipe(name: "Slow bloom", movement: .gradient, speed: warm, source: .cover, rhythm: (40, 85), bulb: .drift, kick: 40, display: "Lava", scheme: "Cover Colours", tiles: .ripple, glow: .second),
+                Recipe(name: "Tide", movement: .flow, speed: warm, source: .scheme, rhythm: (35, 80), bulb: .drift, kick: 40, display: "Fractal", scheme: "Soft Club", tiles: .spectrum, glow: .second),
+                Recipe(name: "Breath", movement: .flexing, speed: 1, source: .cover, rhythm: (30, 80), bulb: .drift, kick: 30, display: "Classic Glow", scheme: "Cover Colours", tiles: .meter, glow: .main),
+                Recipe(name: "Amber room", movement: .gradient, speed: 1, source: .scheme, rhythm: (40, 75), bulb: .drift, kick: 30, display: "Lava", scheme: "Amber", tiles: .ripple, glow: .main),
+                Recipe(name: "Ice drift", movement: .flow, speed: 2, source: .scheme, direction: .inward, rhythm: (35, 80), bulb: .drift, kick: 60, display: "Fractal", scheme: "Ice", tiles: .spectrum, glow: .second),
             ]
         case (.rave, .calm):
             return [

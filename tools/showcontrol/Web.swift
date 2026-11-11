@@ -215,7 +215,7 @@ extension Show {
         return [
             "title": title, "artist": artist, "status": status,
             "lampsOn": lampsOn, "style": styleName, "scheme": schemeName,
-            "autopilot": autopilot?.rawValue ?? "off", "palette": palette?.rawValue ?? "",
+            "autopilot": autopilot?.rawValue ?? "off", "palette": palette?.rawValue ?? "", "paletteColour": paletteColour.hex,
             "macros": autopilot.map { s in
                 (Autopilot.macroNames[s] ?? []).enumerated().map { i, m in
                     ["name": m.0, "about": m.1, "value": macros[s.rawValue]?[i] ?? 50] as [String: Any]
@@ -249,6 +249,7 @@ extension Show {
         case "lamps": if let on = a["on"] as? Bool { lampsOn = on }
         case "autopilot":
             if let s = a["style"] as? String { autopilot = Autopilot.Style(rawValue: s) }
+            if let c = (a["colour"] as? String).flatMap(RGB.init(hex:)) { paletteColour = c }
             if let p = a["palette"] as? String { palette = Autopilot.Palette(rawValue: p) }
         case "macro":
             if let s = autopilot, let i = a["index"] as? Int, (0..<4).contains(i), let v = a["value"] as? Int {

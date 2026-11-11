@@ -247,8 +247,10 @@ TILES) are for setting things up; **Settings** holds the phone remote, the timin
 - **Master** scales every light's brightness and TILES'.
 - **Blackout** puts every light and TILES out until pressed again; the show keeps running
   underneath.
-- **Flash** is held: every light white at full while the button is down. From a phone it lets go
-  by itself after 5 s, in case the release is lost.
+- **Flash** is held: every light, the display's whole screen and TILES (pads and underglow) white
+  at full while the button is down. The display and TILES are told again every 50 ms and let go
+  by themselves soon after the last, and from a phone it all lets go after 5 s, in case the
+  release is lost.
 - **Freeze** holds the autopilot on its current look (only with the autopilot on).
 - **Scenes** are pads: click one to recall the room, **+** saves the room as it is now (every
   light's look and settings, the display's style) under a name, right-click deletes.
@@ -274,21 +276,25 @@ a whole-rig look from its style's pool: the lamps' movement and colours, the bul
 display's visualizer and scheme (and TILES' animation when taken over). **Club** follows the song's
 arc (washes in breakdowns, grooves in the body, strobes at the peak, a switch on each drop, a new
 look about every 32 bars or at a new section), **Lounge** stays slow and gentle (a change every
-minute or two, never a strobe), **Rave** goes maximal (strikes and strobes, a new look every
+minute or two, never a strobe; the bulb drifts slowly through warm hues, low, unless a palette
+other than Cover is picked), **Rave** goes maximal (strikes and strobes, a new look every
 8 bars). Each style has four macros (Club: energy, pace, colour, drop impact; Lounge: warmth, motion,
 depth, drift; Rave: intensity, pace, chaos, strobe), 50 leaving its looks as they are, and a
-palette can be picked for the whole rig: Cover, Sentia, Ice or Sunset (none: each look its own).
+palette can be picked for the whole rig: Cover, Sentia, Ice, Sunset or One colour, from the picker
+beside them (none: each look its own; the display, which only takes its schemes, gets the one
+nearest in hue).
 It lies over the settings and saves nothing; off, everything is as it was.
 
 Scenes, presets and settings live in `~/Library/Application Support/Show Control`.
 
 - **Govee** lamps are streamed a colour per segment (all 14 on the H6076). Turn on **LAN Control**
   for the lamp in the Govee Home app; the app finds it by itself.
-- **Matter** lights (bulbs already in Alexa or Apple Home) play in one of three styles, since a
+- **Matter** lights (bulbs already in Alexa or Apple Home) play in one of four styles, since a
   bulb only fades slowly: **Strobe** (a hard flash on each kick, straight off between them),
   **Pulse** (up on each kick, fading back down through the beat) or **Wash** (no kicks: brightness
   with the music's energy, colour along the look's colours with how bright or bassy it sounds, in
-  long fades), through `tools/showcontrol/matter` (needs Node): `npm install` there once, then
+  long fades) or **Drift** (no kicks: one colour sliding into the next, a minute each at the
+  slowest, warm hues unless the look has its own, kept low), through `tools/showcontrol/matter` (needs Node): `npm install` there once, then
   pair each light with the code from its home app's "share" or "add another controller":
   `node lights.js pair 01234567890 bulb`. The helper sends a light one command at a time (a kick
   first), so they can't pile up in the bulb, and reports each light's round trip. build.sh copies
