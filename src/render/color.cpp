@@ -194,7 +194,7 @@ ScenePalette pickPalette(const ArtStats& s) {
     return p;
 }
 
-GlowLook glowLook(const ScenePalette& p, int amount, int scheme) {
+GlowLook glowLook(const ScenePalette& p, int amount, int scheme, RGB one) {
     // Dark to bright, at AT[1..4] up the ramp (see glowColour).
     static const RGB SCHEMES[SCHEME_COUNT][4] = {
         {},
@@ -205,7 +205,12 @@ GlowLook glowLook(const ScenePalette& p, int amount, int scheme) {
     };
     GlowLook g;
     g.stops[0] = RGB{0, 0, 0};
-    if (scheme > SCHEME_COVER && scheme < SCHEME_COUNT) {
+    if (scheme == SCHEME_ONE) {
+        g.stops[1] = lerp(RGB{0, 0, 0}, one, 77);
+        g.stops[2] = lerp(RGB{0, 0, 0}, one, 166);
+        g.stops[3] = one;
+        g.stops[4] = lerp(one, RGB{255, 255, 255}, 115);
+    } else if (scheme > SCHEME_COVER && scheme < SCHEME_ONE) {
         for (int i = 0; i < 4; i++) g.stops[i + 1] = SCHEMES[scheme][i];
     } else if (p.coverHues > 0) {  // up the ramp through the cover's own hues
         const int n = p.coverHues;

@@ -280,9 +280,9 @@ minute or two, never a strobe; the bulb drifts slowly through warm hues, low, un
 other than Cover is picked), **Rave** goes maximal (strikes and strobes, a new look every
 8 bars). Each style has four macros (Club: energy, pace, colour, drop impact; Lounge: warmth, motion,
 depth, drift; Rave: intensity, pace, chaos, strobe), 50 leaving its looks as they are, and a
-palette can be picked for the whole rig: Cover, Sentia, Ice, Sunset or One colour, from the picker
-beside them (none: each look its own; the display, which only takes its schemes, gets the one
-nearest in hue).
+palette can be picked for the whole rig: Cover, Sentia, Ice, Sunset or One colour (none: each look
+its own). The dot beside them sets One colour's colour without choosing it; the display draws it
+as a ramp from dark through the colour to nearly white.
 It lies over the settings and saves nothing; off, everything is as it was.
 
 Scenes, presets and settings live in `~/Library/Application Support/Show Control`.

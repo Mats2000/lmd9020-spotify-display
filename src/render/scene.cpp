@@ -269,11 +269,13 @@ void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms) {
         if (heard) {
             vizStyle_ = np.audio.style < VIZ_COUNT ? np.audio.style : 0;
             vizScheme_ = np.audio.scheme < SCHEME_COUNT ? np.audio.scheme : 0;
+            vizOne_ = RGB{np.audio.one[0], np.audio.one[1], np.audio.one[2]};
         }
         drawVisualizer(vizStyle_, c, x0, y0, x0 + ART_W, y0 + ART_H, y0 + ART_H + 4,
                        (dtMs_ > 100 ? 100 : dtMs_) * 0.001f, ms, in, viz_);
         glow_.on = true;
-        glow_.look = glowLook(pal_, glowAmount_, vizScheme_);
+        glow_.look = glowLook(pal_, glowAmount_, vizScheme_, vizOne_);
+        glow_.one = (uint32_t)vizOne_.r << 16 | vizOne_.g << 8 | vizOne_.b;
         glow_.style = vizStyle_;
         glow_.scheme = vizScheme_;
         glow_.version = shownKey_;

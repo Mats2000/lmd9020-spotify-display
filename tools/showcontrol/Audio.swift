@@ -42,6 +42,7 @@ final class Analyzer {
     private var chosen: UInt8 = 0
     private var colours: UInt8 = 0
     private var on = true
+    private var oneColour = RGB(255, 0, 255)
 
     // A kick, the moment it's found (on the audio thread): its strength 0...1, when Spotify played
     // it (capture clock, see Sync.now), and the beat's period in seconds once the tempo is sure (else 0).
@@ -59,6 +60,10 @@ final class Analyzer {
     var scheme: UInt8 {  // the colours it should draw in
         get { lock.lock(); defer { lock.unlock() }; return colours }
         set { lock.lock(); colours = newValue; lock.unlock() }
+    }
+    var one: RGB {  // the colour for the display's one-colour scheme
+        get { lock.lock(); defer { lock.unlock() }; return oneColour }
+        set { lock.lock(); oneColour = newValue; lock.unlock() }
     }
     var enabled: Bool {  // false: the display keeps its normal background
         get { lock.lock(); defer { lock.unlock() }; return on }
@@ -365,6 +370,8 @@ final class Analyzer {
         packet.append(scheme)
         let wave = waveform()
         packet += wave
+        let c = one
+        packet += [c.r, c.g, c.b]
         send(packet)
 
         lock.lock()

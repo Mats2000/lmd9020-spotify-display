@@ -157,6 +157,7 @@ static uint32_t glowTable[256];
 
 static void showGlowPalette(const GlowRegion& g) {
     static int amount = -1, level = -1, style = -1, scheme = -1;
+    static uint32_t one = 0;
     static uint32_t version = 0;
     static bool wasOn = false;
     if (g.on != wasOn) {
@@ -168,12 +169,12 @@ static void showGlowPalette(const GlowRegion& g) {
         amount = level = style = scheme = -1;
         return;
     }
-    if (g.look.amount != amount || g.level != level || g.version != version || g.style != style || g.scheme != scheme) {
+    if (g.look.amount != amount || g.level != level || g.version != version || g.style != style || g.scheme != scheme || g.one != one) {
         for (int i = 0; i < 256; i++) {
             RGB c = glowColour(g.look, i);
             glowTable[i] = ESP_8_BIT_composite::encodeColor(c.r, c.g, c.b, g.level);
         }
-        amount = g.look.amount, level = g.level, version = g.version, style = g.style, scheme = g.scheme;
+        amount = g.look.amount, level = g.level, version = g.version, style = g.style, scheme = g.scheme, one = g.one;
     }
     ESP_8_BIT_composite::setBand(0, Canvas::H, glowTable);
 }

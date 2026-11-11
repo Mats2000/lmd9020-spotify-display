@@ -83,6 +83,7 @@ struct GlowLook {
     int amount;
 };
 // The visualizers' colours, chosen in the app: the cover's own, or a fixed scheme.
-enum ColourScheme { SCHEME_COVER, SCHEME_SENTIA, SCHEME_ICE, SCHEME_AMBER, SCHEME_SOFT_CLUB, SCHEME_COUNT };
-GlowLook glowLook(const ScenePalette& p, int amount, int scheme = SCHEME_COVER);
+// SCHEME_ONE: a ramp of the one colour the app sends with it.
+enum ColourScheme { SCHEME_COVER, SCHEME_SENTIA, SCHEME_ICE, SCHEME_AMBER, SCHEME_SOFT_CLUB, SCHEME_ONE, SCHEME_COUNT };
+GlowLook glowLook(const ScenePalette& p, int amount, int scheme = SCHEME_COVER, RGB one = RGB{255, 0, 255});
 RGB glowColour(const GlowLook& g, int index);

@@ -8,7 +8,8 @@ import Foundation
 
 // Learns the display's address from its broadcast ("LMD9020 1" every 2 s), then sends it
 // packets: "LMDV", version 1, flags (bit 0: music playing), level, beat, 16 bands, style, colour
-// scheme, then 64 samples of the waveform (signed bytes, about 5 ms, scaled to fill).
+// scheme, then 64 samples of the waveform (signed bytes, about 5 ms, scaled to fill), then the
+// colour for the one-colour scheme (5).
 final class Link {
     private let sock: Int32
     private var target: sockaddr_in?

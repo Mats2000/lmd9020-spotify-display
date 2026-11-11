@@ -7,6 +7,7 @@ import SwiftUI
 
 let styles = ["Classic Glow", "Spectrum", "Pulse Halo", "Lava", "Rave", "Fractal"]  // VizStyle order
 let schemes = ["Cover Colours", "Sentia", "Ice", "Amber", "Soft Club"]  // ColourScheme order
+let oneColourScheme = "One Colour"  // the display's scheme 5, in Show.paletteColour
 
 final class Show: ObservableObject {
     enum Page: String, CaseIterable { case live = "Live", lights = "Lights", display = "Display", tiles = "TILES", settings = "Settings" }
@@ -110,7 +111,7 @@ final class Show: ObservableObject {
         switch palette {
         case nil: break
         case .cover?: r.source = .cover; r.scheme = Autopilot.Palette.cover.scheme
-        case .single?: r.source = .own; r.scheme = nearestScheme(paletteColour)
+        case .single?: r.source = .own; r.scheme = oneColourScheme
         case let p?: r.source = .scheme; r.scheme = p.scheme
         }
         return r
@@ -275,7 +276,8 @@ final class Show: ObservableObject {
             analyzer.enabled = true
             shuffling = false
             analyzer.style = UInt8(styles.firstIndex(of: r.display) ?? 0)
-            analyzer.scheme = UInt8(schemes.firstIndex(of: r.scheme) ?? 0)
+            analyzer.scheme = r.scheme == oneColourScheme ? 5 : UInt8(schemes.firstIndex(of: r.scheme) ?? 0)
+            analyzer.one = paletteColour
             return
         }
         analyzer.enabled = styleName != "Off"
@@ -533,18 +535,3 @@ final class Show: ObservableObject {
     }
 }
 
-// The display can't take any colour, only its schemes: the one whose colours sit nearest in hue.
-private func nearestScheme(_ c: RGB) -> String {
-    func hue(_ c: RGB) -> Double {
-        let r = Double(c.r), g = Double(c.g), b = Double(c.b), mx = max(r, g, b), d = mx - min(r, g, b)
-        guard d > 0 else { return 0 }
-        let h = mx == r ? (g - b) / d : mx == g ? (b - r) / d + 2 : (r - g) / d + 4
-        return (h * 60 + 360).truncatingRemainder(dividingBy: 360)
-    }
-    func apart(_ a: Double, _ b: Double) -> Double { let d = abs(a - b); return min(d, 360 - d) }
-    let h = hue(c)
-    let best = schemeLampColours.indices.min { i, j in
-        schemeLampColours[i].map { apart(hue($0), h) }.min()! < schemeLampColours[j].map { apart(hue($0), h) }.min()!
-    }
-    return schemes[(best ?? 0) + 1]
-}

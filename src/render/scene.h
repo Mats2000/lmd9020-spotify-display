@@ -28,6 +28,7 @@ struct NowPlaying {
         int8_t wave[64] = {};      // the waveform, about 5 ms of it
         bool active = false;       // music is playing there
         uint32_t atMs = 0;         // millis() when the last update arrived; 0 = never
+        uint8_t one[3] = {255, 0, 255};  // the colour for SCHEME_ONE
         uint32_t flashUntil = 0;   // millis() the Mac's Flash holds the screen white until; 0 = not
     } audio;
 };
@@ -57,6 +58,7 @@ struct GlowRegion {
     GlowLook look;
     int level = 256;
     int style = 0, scheme = 0;
+    uint32_t one = 0;      // SCHEME_ONE's colour, 0xRRGGBB
     uint32_t version = 0;  // changes with the cover
 };
 
@@ -109,6 +111,7 @@ private:
     int glowAmount_ = 0;     // 0..256: how far the card has blended into the visualizer
     VizState viz_;
     int vizStyle_ = 0, vizScheme_ = 0;
+    RGB vizOne_{255, 0, 255};
     int dtMs_ = 0;
     ScenePalette pal_ = defaultPalette();  // kept after a track ends to tint the waves
     Marquee lineMarquee_{};

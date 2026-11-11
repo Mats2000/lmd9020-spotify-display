@@ -289,7 +289,7 @@ app.addEventListener("input", e => {
 app.addEventListener("change", e => {
   const t = e.target, f = state && current(state);
   if (t.dataset.key) return act({ ...JSON.parse(t.dataset.base), [t.dataset.key]: +t.value });
-  if (t.id === "paletteColour") return act({ action: "autopilot", palette: "single", colour: t.value });
+  if (t.id === "paletteColour") return act({ action: "autopilot", colour: t.value });
   if (t.dataset.colour !== undefined) { const cs = f.look.colours.slice(); cs[+t.dataset.colour] = t.value; return act({ action: "look", id: f.id, source: "own", colours: cs }); }
   if (t.id === "lookName" && t.value.trim()) return act({ action: "look", id: f.id, name: t.value.trim() });
 });
