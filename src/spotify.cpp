@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <base64.h>
 
+#include "config.h"
 #include "https.h"
 #include "render/art.h"
 
@@ -16,7 +17,12 @@
 
 static const char* ACCOUNTS_HOST = "accounts.spotify.com";
 static const char* API_HOST = "api.spotify.com";
-static const char* CURRENT_PATH = "/v1/me/player/currently-playing?additional_types=track,episode";
+static const char* CURRENT_PATH = "/v1/me/player?additional_types=track,episode";  // also says which device
+
+static bool deviceShown(const String& type) {
+    String list = "," SPOTIFY_DEVICES ",";
+    return list == ",," || list.indexOf("," + type + ",") >= 0;
+}
 
 static String urlEncode(const String& s) {
     static const char* hex = "0123456789ABCDEF";
@@ -195,6 +201,8 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
     JsonDocument filter;
     filter["is_playing"] = true;
     filter["progress_ms"] = true;
+    filter["device"]["type"] = true;
+    filter["device"]["name"] = true;
     itemFilter(filter["item"].to<JsonObject>());
 
     JsonDocument doc;
@@ -205,6 +213,15 @@ SpotifyResult SpotifyClient::current(Track& track, uint32_t& retryAfterMs) {
         https.close();
         return SpotifyResult::NetError;
     }
+    String type = doc["device"]["type"] | "";
+    static String lastDevice;
+    String device = type + " " + (doc["device"]["name"] | "");
+    if (device != lastDevice) {
+        lastDevice = device;
+        say("Spotify on %s%s\n", device.c_str(), deviceShown(type) ? "" : " (not shown)");
+    }
+    if (!deviceShown(type)) return SpotifyResult::Nothing;
+
     JsonObjectConst item = doc["item"];
     if (item.isNull()) return SpotifyResult::Nothing;  // e.g. a private session
 

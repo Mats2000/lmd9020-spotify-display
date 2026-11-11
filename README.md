@@ -12,6 +12,10 @@ and feeds it into the monitor's BNC input.
   downloaded while the current one plays, so it shows the moment the song
   changes; for a song that wasn't next (a skip to elsewhere), its title
   shows on dark while the cover downloads (two or three seconds).
+  Only Spotify playing on a computer or a speaker (the Mac, the Echo)
+  counts: playing on the phone itself leaves the screensavers up
+  (`SPOTIFY_DEVICES` in `include/config.h`; the phone casting to the Echo
+  counts as the Echo).
 - **Not playing:** the clock and date over a rotating set of screensavers,
   fading to the next every 20 minutes. Particle scenes, tinted from the
   last cover you played:
@@ -435,7 +439,7 @@ playback starts it powers the signal back up and fades in, usually within
   once. The connection to Spotify is kept alive between polls, and resumed
   sessions skip the expensive part of reconnecting. The trusted roots are
   compiled into flash (`src/trust_anchors.c`).
-- **Spotify:** polls `GET /me/player/currently-playing` every 3 s while
+- **Spotify:** polls `GET /me/player` (what's playing and on which device) every 3 s while
   playing (and again just as the song should end) and every 5 s otherwise. The refresh token lives in flash, and
   Spotify-issued replacements are saved automatically.
 - **Covers:** first the 64 px thumbnail is downloaded and split into up to

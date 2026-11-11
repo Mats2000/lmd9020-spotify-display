@@ -40,6 +40,9 @@
 #define PREFETCH_LATE_MS 40000  // the queue is checked again this long before a song ends
 // Pauses shorter than this keep the cover up.
 #define PAUSE_GRACE_MS 8000
+// Spotify device types the display shows, comma-separated (empty = any). Playing on anything
+// else (a phone is "Smartphone") counts as nothing playing.
+#define SPOTIFY_DEVICES "Computer,Speaker"
 
 // ---- Screensaver -----------------------------------------------------------
 
