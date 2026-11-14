@@ -11,7 +11,11 @@ and feeds it into the monitor's BNC input.
   [Visualizer](#visualizer)). The next song in the queue has its cover
   downloaded while the current one plays, so it shows the moment the song
   changes; for a song that wasn't next (a skip to elsewhere), its title
-  shows on dark while the cover downloads (two or three seconds).
+  shows on dark while the cover downloads (two or three seconds). With the
+  visualizer on, it keeps going through the change: the old cover and its
+  line fade out into it, the new line fades in over a dark square, the new
+  cover fades in when it's ready, and the visualizer's colours move to the
+  new cover's over two seconds.
   Only Spotify playing on a computer or a speaker (the Mac, the Echo)
   counts: playing on the phone itself leaves the screensavers up
   (`SPOTIFY_DEVICES` in `include/config.h`; the phone casting to the Echo
@@ -252,6 +256,12 @@ TILES) are for setting things up; **Settings** holds the phone remote, the timin
   by themselves soon after the last, and from a phone it all lets go after 5 s, in case the
   release is lost.
 - **Freeze** holds the autopilot on its current look (only with the autopilot on).
+- **Impacts** adds lightning to sudden hits after a quiet stretch, for slow and cinematic music:
+  a double white flicker on the lamps and the display, a white flash on the bulb and a hit on
+  TILES. A hit counts when the sound is twice as loud as its average over the last 8 s, the
+  1.5 s before it no louder than 1.2 times that average, at least 15 s after the last one and
+  6 s into the music. On 13 minutes of dance music recorded here it fired 9 times, mostly
+  on the drops after breakdowns.
 - **Scenes** are pads: click one to recall the room, **+** saves the room as it is now (every
   light's look and settings, the display's style) under a name, right-click deletes.
 
@@ -260,7 +270,9 @@ TILES) are for setting things up; **Settings** holds the phone remote, the timin
 Lights come along from the same analysis as the display, not a microphone. The **Lights** page
 shows every light found; pick one and set it on its own: on or off, brightness, **kick** (how much
 each kick flashes it, 0-150%) and its own **look**: a movement (Flow, Twinkle, Flexing, Stacking,
-Strike, Gradient, Chase, Pulse), colours (its own, chosen and removed one by one, the cover's or
+Strike, Gradient, Chase, Pulse, Progress: how far into the song, lit bottom to top through the
+colours with the rest of the song faint and the leading edge brightening on kicks; the position
+comes from Spotify every second), colours (its own, chosen and removed one by one, the cover's or
 the display's scheme, in order or at random, changing with the beat or **with the song**: one
 colour at a time, the next when the song's character changes, as its energy across the bands and
 its loudness over ~1.5 s part from the last ~10 s much more than they usually do in that song),

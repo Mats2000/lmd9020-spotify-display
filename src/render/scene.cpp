@@ -14,6 +14,7 @@ namespace {
 
 constexpr int SLEEP_FADE_MS = 3000;
 constexpr int GLOW_FADE_MS = 1200;  // the card to the visualizer and back
+constexpr int GLOW_BLEND_MS = 1800;  // the visualizer's colours to a new cover's
 constexpr uint32_t IDLE_KEY = 0x80000000u;
 constexpr uint32_t LOADING_KEY = 0x40000000u;  // playing, cover still downloading: black
 constexpr uint32_t SNOW_KEY = 0x20000000u;     // full-screen TV snow, to clear the LCD
@@ -129,8 +130,8 @@ Fade fadeFor(uint32_t from, uint32_t to) {
     bool fromIdle = from & IDLE_KEY, toIdle = to & IDLE_KEY;
     if (fromIdle && toIdle) return {1500, 2500};               // one screensaver to the next
     if (fromIdle != toIdle || from == 0) return {1000, 1600};  // music to clock and back
-    if (from == LOADING_KEY) return {250, 700};                // the new cover arriving
-    return {300, 500};                                         // track to track
+    if (from == LOADING_KEY) return {250, 900};                // the new cover arriving
+    return {600, 700};                                         // track to track
 }
 
 // Dithered fade (2x2 pattern): RGB332 steps visibly otherwise.
@@ -167,31 +168,38 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
     if (snowHeld_) want = SNOW_KEY;
 
     bool changing = want != shownKey_;
+    auto music = [](uint32_t k) { return k && !(k & IDLE_KEY) && k != SNOW_KEY; };
+    const bool songToSong = awake_ && (changing ? music(shownKey_) && music(want) : swapIn_);
+    const bool fromLoading = shownKey_ == LOADING_KEY;
     if (changing || !awake_) {
         level_ -= dt * 256 / (awake_ ? fadeFor(shownKey_, want).outMs : SLEEP_FADE_MS);
         if (level_ <= 0) {
             level_ = 0;
             if (changing) {
                 fadeInMs_ = fadeFor(shownKey_, want).inMs;
+                swapIn_ = songToSong;
+                textKept_ = shownKey_ == LOADING_KEY;
+                if (songToSong && want != LOADING_KEY && glow_.on) blendFrom_ = glow_.look, blendAt_ = ms | 1;
                 adopt(np, want, ms);
             }
         }
     } else {
         level_ += dt * 256 / fadeInMs_;
-        if (level_ > 256) level_ = 256;
+        if (level_ >= 256) level_ = 256, swapIn_ = false;
     }
 
     paused_ = np.paused;
     region_.on = false;
     glow_.on = false;
-    if (shownKey_ & IDLE_KEY || shownKey_ == SNOW_KEY || shownKey_ == LOADING_KEY || !shownKey_) viz_.fed = false;
+    if (shownKey_ & IDLE_KEY || shownKey_ == SNOW_KEY || !shownKey_) viz_.fed = false;
     if (shownKey_ & IDLE_KEY) {
         drawIdle(c, np, clock, ms);
     } else if (shownKey_ == SNOW_KEY) {
         drawSnow(c, ms);
     } else if (shownKey_ == LOADING_KEY) {
         audio_.update(ms);
-        drawLoading(c, np, ms);
+        drawNowPlaying(c, np, ms, false);
+        if (!glow_.on) drawLoading(c, np, ms);
     } else if (shownKey_) {
         audio_.update(ms);
         drawNowPlaying(c, np, ms);
@@ -222,7 +230,9 @@ void Scene::render(Canvas& c, const NowPlaying& np, const ClockTime& clock, uint
         }
     }
     region_.level = level_;
-    glow_.level = level_;
+    glow_.level = songToSong ? 256 : level_;
+    const bool keepText = changing ? fromLoading : textKept_;
+    glow_.look.text = songToSong && !keepText ? level_ : 256;
 }
 
 void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
@@ -230,13 +240,15 @@ void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
     if (key == LOADING_KEY) loadingSince_ = ms;
     if (key & IDLE_KEY) {
         saver_ = (int)(key & 0xFF);
-    } else if (key != LOADING_KEY && key != SNOW_KEY) {
+    } else if (key != SNOW_KEY) {
         copyUtf8(title_, np.title, sizeof(title_));
         copyUtf8(artist_, np.artist, sizeof(artist_));
-        art_ = np.art;
-        artColours_ = np.art ? np.artColours : 0;
-        pal_ = np.pal;
         lineMarquee_ = {lineWidth16(title_, artist_), ms};
+        if (key != LOADING_KEY) {  // loading keeps the last cover's colours for the visualizer
+            art_ = np.art;
+            artColours_ = np.art ? np.artColours : 0;
+            pal_ = np.pal;
+        }
     }
     artInUse_.store((key & IDLE_KEY) || key == LOADING_KEY || key == SNOW_KEY ? nullptr : art_);
 }
@@ -244,7 +256,7 @@ void Scene::adopt(const NowPlaying& np, uint32_t key, uint32_t ms) {
 // ---------------------------------------------------------------------------
 // Now playing
 
-void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms) {
+void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms, bool cover) {
     Drift d = cardDrift(ms);
     // The visualizer while the Mac sends the music; a solid background otherwise.
 #if VISUALIZER
@@ -275,13 +287,25 @@ void Scene::drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms) {
                        (dtMs_ > 100 ? 100 : dtMs_) * 0.001f, ms, in, viz_);
         glow_.on = true;
         glow_.look = glowLook(pal_, glowAmount_, vizScheme_, vizOne_);
+        glow_.blend = 256;
+        if (blendAt_) {
+            const uint32_t t = ms - blendAt_;
+            if (t >= (uint32_t)GLOW_BLEND_MS) blendAt_ = 0;
+            else glow_.look = blendLook(blendFrom_, glow_.look, glow_.blend = (int)(t * 256 / GLOW_BLEND_MS));
+        }
         glow_.one = (uint32_t)vizOne_.r << 16 | vizOne_.g << 8 | vizOne_.b;
         glow_.style = vizStyle_;
         glow_.scheme = vizScheme_;
         glow_.version = shownKey_;
     } else {
+        if (!cover) return;  // drawLoading draws it
         c.fill(pal_.bg);
         viz_.fed = false;
+    }
+    if (!cover) {  // the new cover still decoding: a dark square where it will be
+        for (int y = 0; y < ART_H; y++) memset(c.rows[ART_Y + d.y + y] + ART_X + d.x, 0, ART_W);
+        drawCaption(c, title_, artist_, lineMarquee_, Offset{d.x, d.y}, pal_.title, pal_.artist, true, ms, true);
+        return;
     }
     for (int y = 0; y < ART_H; y++) copyArtRow(art_, y, c.rows[ART_Y + d.y + y] + ART_X + d.x);
     if (artColours_ > 0) {

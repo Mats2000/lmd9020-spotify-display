@@ -222,7 +222,7 @@ extension Show {
                 }
             } ?? [],
             "energy": timing.energy, "playing": timing.playing, "master": master, "blackout": blackout,
-            "flash": flash, "freeze": freeze, "bpm": timing.period > 0.25 ? Int((60 / timing.period).rounded()) : 0, "tilesOn": tiles.on, "tilesName": tilesName ?? "",
+            "flash": flash, "freeze": freeze, "impacts": impacts, "bpm": timing.period > 0.25 ? Int((60 / timing.period).rounded()) : 0, "tilesOn": tiles.on, "tilesName": tilesName ?? "",
             "autoParts": liveRecipe.map { r in
                 ["lamps": "\(r.movement.rawValue.capitalized), speed \(r.speed)", "bulb": r.bulb.rawValue.capitalized,
                  "display": "\(r.display), \(r.scheme)", "tiles": tiles.on ? "\(r.tiles)".capitalized : ""]
@@ -262,6 +262,7 @@ extension Show {
         case "blackout": if let on = a["on"] as? Bool { blackout = on }
         case "flash": if let on = a["on"] as? Bool { phoneFlash(on) }
         case "freeze": if let on = a["on"] as? Bool { freeze = on }
+        case "impacts": if let on = a["on"] as? Bool { impacts = on }
         case "tiles": if let on = a["on"] as? Bool { tiles.on = on }
         case "display":
             if let s = a["style"] as? String, s == "Shuffle" || s == "Off" || styles.contains(s) { styleName = s }

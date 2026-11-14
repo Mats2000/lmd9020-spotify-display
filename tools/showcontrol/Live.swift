@@ -92,10 +92,13 @@ struct LivePage: View {
                 DeskButton(title: "Blackout", lit: show.blackout) { show.blackout.toggle() }
                 DeskButton(title: "Flash", lit: show.flash, momentary: { show.flash = $0 })
             }
-            DeskButton(title: show.freeze ? "Frozen" : "Freeze", lit: show.freeze) { show.freeze.toggle() }
-                .opacity(show.autopilot == nil ? 0.45 : 1)
-                .disabled(show.autopilot == nil)
-            Text("Flash: hold for every light white. Freeze holds the autopilot's look.")
+            HStack(spacing: 10) {
+                DeskButton(title: show.freeze ? "Frozen" : "Freeze", lit: show.freeze) { show.freeze.toggle() }
+                    .opacity(show.autopilot == nil ? 0.45 : 1)
+                    .disabled(show.autopilot == nil)
+                DeskButton(title: "Impacts", lit: show.impacts) { show.impacts.toggle() }
+            }
+            Text("Flash: hold for every light white. Freeze holds the autopilot's look. Impacts: lightning on a sudden hit after a quiet stretch.")
                 .font(.soraLight(11)).foregroundColor(Sentia.ink2)
         }
         .padding(18)

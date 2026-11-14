@@ -39,7 +39,7 @@ let schemeLampColours: [[RGB]] = [
 
 // A look: how the lamps move with the music. Saved as presets.
 struct LampLook: Codable, Equatable, Identifiable {
-    enum Movement: String, Codable, CaseIterable { case flow, twinkle, flexing, stacking, strike, gradient, chase, pulse }
+    enum Movement: String, Codable, CaseIterable { case flow, twinkle, flexing, stacking, strike, gradient, chase, pulse, progress }
     enum Source: String, Codable, CaseIterable { case own, cover, scheme }  // own: the colours below
     enum Direction: String, Codable, CaseIterable { case up, down, inward, outward, random }
 
@@ -112,6 +112,7 @@ final class LampEngine {
     // Following the song: one colour at a time, the next each time the song's character changes,
     // faded across over 1.5 s.
     var songStep = 0
+    var progress = 0.0  // how far into the song, 0...1 (the progress movement)
     private var shownStep = 0, fromColour: RGB?, fade = 1.0
     private var songColour: RGB {
         let c = palette_, to = c[songStep % c.count]
@@ -245,6 +246,19 @@ final class LampEngine {
             }
         case .pulse:
             for i in 0..<n { line[i] = barColour }
+        case .progress:
+            // The song so far lit through the colours, the rest of it faint, the leading edge
+            // brightening on the kicks.
+            let filled = max(0, min(1, progress)) * Double(n)
+            for i in 0..<n {
+                let at = Double(i) / Double(max(1, n - 1)) * Double(c.count - 1)
+                let k = min(c.count - 1, Int(at))
+                let col = RGB.mix(c[k], c[min(c.count - 1, k + 1)], at - Double(k))
+                let done = max(0, min(1, filled - Double(i)))
+                line[i] = col.scaled(done > 0 ? 0.3 + 0.7 * done : 0.05)
+            }
+            let edge = min(n - 1, Int(filled))
+            line[edge] = RGB.mix(line[edge], RGB(255, 255, 255), 0.15 + 0.45 * flash)
         }
 
         // Brightness with the rhythm: from rhythmLow, quiet, to rhythmHigh on the beat.

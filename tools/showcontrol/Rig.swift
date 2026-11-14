@@ -135,6 +135,24 @@ final class Rig {
     func set(_ p: Plan) { queue.async { self.plan = p } }
     func setCover(_ colours: [RGB]) { queue.async { self.cover = colours } }
 
+    // Where the song is (from Spotify, every second), carried on between reports while it plays.
+    private var song = (at: Date(), position: 0.0, length: 0.0, playing: false)
+    func setSong(position: Double, length: Double, playing: Bool) {
+        let now = Date()
+        queue.async { self.song = (now, position, length, playing) }
+    }
+    private var progress: Double {
+        guard song.length > 0 else { return 0 }
+        return (song.position + (song.playing ? Date().timeIntervalSince(song.at) : 0)) / song.length
+    }
+
+    // An impact: lightning on every light, a double flicker over 0.45 s.
+    private var impactAt = Date.distantPast
+    func impact() { queue.async { self.impactAt = Date() } }
+    private func lightning(_ t: Double) -> Double {
+        t < 0.06 ? 1 : t < 0.14 ? 0.08 : t < 0.26 ? 0.85 : max(0, 0.85 * (1 - (t - 0.26) / 0.19))
+    }
+
     // Let go of a light (someone else has it), or take it back for the show.
     func hold(_ f: Fixture) {
         queue.async {
@@ -384,6 +402,7 @@ final class Rig {
         preview.look = plan.preview
         preview.palette = palette(for: plan.preview)
         preview.songStep = songStep
+        preview.progress = progress
         let shown = preview.frame(dt: dt, energy: r.playing ? energy : 0.35)
 
         for f in plan.fixtures {
@@ -407,6 +426,17 @@ final class Rig {
             e.look = l
             e.palette = palette(for: l)
             e.songStep = songStep
+            e.progress = progress
+            let struck = now.timeIntervalSince(impactAt)
+            if struck < 0.45 {
+                if f.kind == .govee {
+                    let w = lightning(struck), frame = e.frame(dt: dt, energy: energy).map { $0.scaled(Double(f.settings.brightness) / 100) }
+                    send(f, frame.map { RGB.mix($0, RGB(255, 255, 255), w) }, raw: true)
+                } else {
+                    override(f, white: true)
+                }
+                continue
+            }
             switch f.kind {
             case .govee:
                 let frame = e.frame(dt: dt, energy: energy)

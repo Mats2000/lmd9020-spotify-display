@@ -234,6 +234,15 @@ GlowLook glowLook(const ScenePalette& p, int amount, int scheme, RGB one) {
     return g;
 }
 
+GlowLook blendLook(const GlowLook& from, const GlowLook& to, int t) {
+    GlowLook g = to;
+    for (int i = 0; i < 5; i++) g.stops[i] = lerp(from.stops[i], to.stops[i], t);
+    g.bg = lerp(from.bg, to.bg, t);
+    g.title = lerp(from.title, to.title, t);
+    g.artist = lerp(from.artist, to.artist, t);
+    return g;
+}
+
 RGB glowColour(const GlowLook& g, int index) {
     static const float AT[5] = {0.0f, 0.30f, 0.60f, 0.85f, 1.0f};
     const RGB base = lerp(g.bg, g.stops[0], g.amount);
@@ -241,7 +250,7 @@ RGB glowColour(const GlowLook& g, int index) {
         const bool title = index < GLOW_ARTIST;
         const int k = index - (title ? GLOW_TITLE : GLOW_ARTIST);
         const RGB ink = lerp(title ? g.title : g.artist, title ? RGB{250, 246, 240} : RGB{214, 208, 200}, g.amount);
-        return lerp(base, ink, (k + 1) * 256 / GLOW_TEXT_LEVELS);
+        return lerp(base, ink, (k + 1) * 256 / GLOW_TEXT_LEVELS * g.text >> 8);
     }
     const float u = (float)index / (GLOW_LEVELS - 1);
     int s = 0;

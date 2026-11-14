@@ -60,6 +60,7 @@ struct GlowRegion {
     int style = 0, scheme = 0;
     uint32_t one = 0;      // SCHEME_ONE's colour, 0xRRGGBB
     uint32_t version = 0;  // changes with the cover
+    int blend = 256;       // changes while the colours move to a new cover's
 };
 
 // Draws a frame: the now-playing card or a screensaver, with fades between them.
@@ -91,7 +92,7 @@ private:
 
     int saverFor(uint32_t ms) const;
     void adopt(const NowPlaying& np, uint32_t key, uint32_t ms);
-    void drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms);
+    void drawNowPlaying(Canvas& c, const NowPlaying& np, uint32_t ms, bool cover = true);
     void drawLoading(Canvas& c, const NowPlaying& np, uint32_t ms);
     struct Offset {
         int x, y;
@@ -122,6 +123,11 @@ private:
     uint32_t snowUntil_ = 0;  // snow after the music stops, until then
     uint32_t loadingSince_ = 0;
     int level_ = 0;  // overall brightness, 0..256, for the fades
+    // Song to song the visualizer keeps going: only the cover and its line fade, and the
+    // visualizer's colours move to the new cover's over GLOW_BLEND_MS.
+    bool swapIn_ = false, textKept_ = false;  // textKept_: the line was already the new song's
+    GlowLook blendFrom_{};
+    uint32_t blendAt_ = 0;
     int fadeInMs_ = 1600;
     bool awake_ = true;
     uint32_t lastMs_ = 0;

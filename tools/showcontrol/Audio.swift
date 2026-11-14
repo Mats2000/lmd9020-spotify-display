@@ -43,6 +43,9 @@ final class Analyzer {
     private var colours: UInt8 = 0
     private var on = true
     private var oneColour = RGB(255, 0, 255)
+    // Impacts: a hit at least twice the last 8 s's loudness after 1.5 s no louder than it.
+    var onImpact: (() -> Void)?
+    private var slowRms: Float = 0, recentRms: [Float] = [], heardFrames = 0, sinceImpact = 0
 
     // A kick, the moment it's found (on the audio thread): its strength 0...1, when Spotify played
     // it (capture clock, see Sync.now), and the beat's period in seconds once the tempo is sure (else 0).
@@ -360,6 +363,16 @@ final class Analyzer {
         }
         beat *= 0.85
 
+        recentRms.append(rms)
+        if recentRms.count > 96 { recentRms.removeFirst() }
+        heardFrames = rms > 1e-3 ? heardFrames + 1 : 0
+        sinceImpact += 1
+        if heardFrames > 360, sinceImpact > 900, rms > 0.012, rms > slowRms * 2, recentRms.count == 96,
+           recentRms[5..<89].max()! < slowRms * 1.2 {
+            sinceImpact = 0
+            onImpact?()
+        }
+        slowRms += (rms - slowRms) / Float(updatesPerSecond * 8)
         silentFor = rms > 1e-4 ? 0 : silentFor + 1
         let playing = silentFor < Int(updatesPerSecond * 1.5)
         let quantised = bands.map { UInt8($0 * 255) }

@@ -87,6 +87,21 @@ final class Show: ObservableObject {
     }
     private var flashAt = Date.distantPast
     @Published var freeze = false { didSet { pilot.frozen = freeze } }
+    @Published var impacts = UserDefaults.standard.bool(forKey: "impacts") {
+        didSet { UserDefaults.standard.set(impacts, forKey: "impacts") }
+    }
+    // Lightning: the lights (Rig.impact), the display's white twice and a hit on TILES.
+    private func strike() {
+        guard impacts, !blackout else { return }
+        rig.impact()
+        let link = link, tiles = rig.tiles, white: [UInt8] = Array("LMDF".utf8) + [1], dark: [UInt8] = Array("LMDF".utf8) + [0]
+        link.send(white)
+        tiles.flash(true)
+        for (t, p) in [(0.06, dark), (0.14, white), (0.26, dark)] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) { if !self.flash { link.send(p) } }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { if !self.flash { tiles.flash(false) } }
+    }
     @Published var kicks = 0  // counts up on each kick (the kick lamp)
     // Each style's four macros (Autopilot.macroNames), 0-100.
     @Published var macros: [String: [Int]] {
@@ -173,6 +188,10 @@ final class Show: ObservableObject {
             self?.rig.kick(s, played: played, period: period)
         }
         analyzer.onAccent = { [weak self] s in self?.rig.accent(s) }
+        analyzer.onImpact = { [weak self] in
+            guard let self else { return }
+            Sync.later(own: self.displayOwn) { DispatchQueue.main.async { self.strike() } }
+        }
         applyStyle()
 
         rig.onFrames = { [weak self] frames, preview in
@@ -293,6 +312,7 @@ final class Show: ObservableObject {
 
     private func update() {
         watcher.poll()
+        rig.setSong(position: watcher.position, length: watcher.length, playing: watcher.playing)
         if shuffling && Date().timeIntervalSince(shuffledAt) > 60 { shuffle() }
         let wanted = (analyzer.enabled || lampsOn) && (watcher.playing || !watcher.reachable)
         if wanted {

@@ -81,7 +81,10 @@ struct GlowLook {
     RGB stops[5];  // the ramp at 0, 0.30, 0.60, 0.85 and 1
     RGB bg, title, artist;
     int amount;
+    int text = 256;  // the title and artist alone fading, 0..256 (a song change)
 };
+// Partway (0..256) from one look's colours to another's.
+GlowLook blendLook(const GlowLook& from, const GlowLook& to, int t);
 // The visualizers' colours, chosen in the app: the cover's own, or a fixed scheme.
 // SCHEME_ONE: a ramp of the one colour the app sends with it.
 enum ColourScheme { SCHEME_COVER, SCHEME_SENTIA, SCHEME_ICE, SCHEME_AMBER, SCHEME_SOFT_CLUB, SCHEME_ONE, SCHEME_COUNT };

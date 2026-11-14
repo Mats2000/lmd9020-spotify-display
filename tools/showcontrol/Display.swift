@@ -161,6 +161,7 @@ final class NowPlayingWatcher {
     private(set) var track = Track()
     private(set) var playing = false, paused = false
     private(set) var reachable = true  // false: not allowed to ask Spotify
+    private(set) var position = 0.0, length = 0.0  // seconds into the song, and its length
     var onNewTrack: ((Track, CGImage?) -> Void)?
 
     private let script = NSAppleScript(source: """
@@ -168,7 +169,8 @@ final class NowPlayingWatcher {
             tell application "Spotify"
                 if player state is stopped then return "stopped"
                 return (player state as string) & linefeed & (name of current track) & linefeed & ¬
-                    (artist of current track) & linefeed & (artwork url of current track)
+                    (artist of current track) & linefeed & (artwork url of current track) & linefeed & ¬
+                    (player position as string) & linefeed & ((duration of current track) as string)
             end tell
         end if
         return "stopped"
@@ -183,6 +185,11 @@ final class NowPlayingWatcher {
         playing = parts.first == "playing"
         paused = parts.first == "paused"
         guard parts.count >= 4 else { return }
+        if parts.count >= 6 {
+            let n = { (s: String) in Double(s.replacingOccurrences(of: ",", with: ".")) ?? 0 }  // some locales write 1,5
+            position = n(parts[4])
+            length = n(parts[5]) / 1000
+        }
         let next = Track(title: parts[1], artist: parts[2], artwork: parts[3])
         guard next != track else { return }
         track = next

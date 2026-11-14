@@ -84,7 +84,7 @@ nav[hidden] { display: none; }
 .strip-top { display: flex; gap: 18px; align-items: flex-end; margin: 14px 0 4px; }
 .strip-top div { font: 600 20px "Exo 2", sans-serif; }
 .strip-top small { display: block; font: 400 10px Sora, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); }
-.desk { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+.desk { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .key { height: 54px; border-radius: 14px; border: 1.2px solid var(--line); background: none; color: var(--text); font: 400 14px Sora, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
 .key.lit { background: #ff00ff; border-color: #ff00ff; color: var(--ink); }
 .pads { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -165,7 +165,7 @@ function show(s) {
   const f = current(s), l = f && f.look;
   const k = [tab, s.fixtures.map(x => x.id + x.held + x.on + x.name + x.look.name + x.preset).join(), s.presets.map(p => p.id + p.name).join(),
     s.scenes.map(x => x.id).join(), f && [f.id, f.brightness, f.kick, f.bulb].join(), s.autopilot, s.autoLook, s.palette, s.paletteColour,
-    (s.macros || []).map(m => m.value).join(), s.tilesOn, s.master, s.blackout, s.flash, s.freeze, l && JSON.stringify(l, Object.keys(l).sort()), s.style, s.scheme, s.lampsOn].join("|");
+    (s.macros || []).map(m => m.value).join(), s.tilesOn, s.master, s.blackout, s.flash, s.freeze, s.impacts, l && JSON.stringify(l, Object.keys(l).sort()), s.style, s.scheme, s.lampsOn].join("|");
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === tab);
   if (k !== shape) { shape = k; render(s); return; }
   for (const x of s.fixtures) for (const el of document.querySelectorAll(`[data-live="${CSS.escape(x.id)}"]`)) el.outerHTML = strip(x.colours, ` data-live="${esc(x.id)}"`);
@@ -192,7 +192,8 @@ function autopilotTab(s) {
   h += `<h2>Desk</h2>` + slider("Master", "value", s.master, 0, 100, "%", { action: "master" });
   h += `<div class="desk"><button class="key${s.blackout ? " lit" : ""}" ${data({ action: "blackout", on: !s.blackout })}>Blackout</button>
     <button class="key${s.flash ? " lit" : ""}" id="flashKey">Flash</button>
-    <button class="key${s.freeze ? " lit" : ""}" ${s.autopilot === "off" ? "disabled style=\"opacity:.45\"" : ""} ${data({ action: "freeze", on: !s.freeze })}>${s.freeze ? "Frozen" : "Freeze"}</button></div>`;
+    <button class="key${s.freeze ? " lit" : ""}" ${s.autopilot === "off" ? "disabled style=\"opacity:.45\"" : ""} ${data({ action: "freeze", on: !s.freeze })}>${s.freeze ? "Frozen" : "Freeze"}</button>
+    <button class="key${s.impacts ? " lit" : ""}" ${data({ action: "impacts", on: !s.impacts })}>Impacts</button></div>`;
   h += `<h2>Autopilot</h2><div class="pilot" style="margin-top:0">${PILOTS.map(([k, n, about]) => `<button class="${s.autopilot === k ? "on" : ""}" ${data({ action: "autopilot", style: k })}><b>${n}</b><span>${about}</span></button>`).join("")}</div>`;
   if (s.autopilot !== "off") {
     const p = s.autoParts || {};

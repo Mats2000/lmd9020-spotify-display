@@ -158,6 +158,7 @@ struct LightsPage: View {
     static let movementNames: [LampLook.Movement: String] = [
         .flow: "Flow", .twinkle: "Twinkle", .flexing: "Flexing", .stacking: "Stacking",
         .strike: "Strike", .gradient: "Gradient", .chase: "Chase", .pulse: "Pulse",
+        .progress: "Progress",
     ]
     static let sourceNames: [LampLook.Source: String] = [.own: "These colours", .cover: "Cover", .scheme: "Display colours"]
     static let directionNames: [LampLook.Direction: String] = [
