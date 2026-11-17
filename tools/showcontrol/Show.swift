@@ -213,7 +213,20 @@ final class Show: ObservableObject {
     }
     private var cover: [RGB] = []
     private func screenPalette() { if screenOpen { screen.setSong(title: "", artist: "", colours: screenColours) } }
-    private var screenColours: [RGB] { palette == .single ? [paletteColour, paletteColour.scaled(0.5), RGB.mix(paletteColour, RGB(255, 255, 255), 0.5)] : cover }
+    private var screenColours: [RGB] { showColours.isEmpty ? Self.three(palette == .single ? [paletteColour] : cover) : showColours }
+    // The lit lamp's palette (Rig.onPalette), as three colours: one becomes dark, itself and pale.
+    private var showColours: [RGB] = []
+    private static func three(_ c: [RGB]) -> [RGB] {
+        switch c.count {
+        case 0: return []
+        case 1: return [c[0], c[0].scaled(0.45), RGB.mix(c[0], RGB(255, 255, 255), 0.5)]
+        case 2: return [c[0], c[1], RGB.mix(c[0], c[1], 0.5)]
+        default: return c
+        }
+    }
+    @Published var tilesMatch = UserDefaults.standard.object(forKey: "tilesMatch") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(tilesMatch, forKey: "tilesMatch"); applyTiles() }
+    }
     private let capture: Capture
     private let watcher = NowPlayingWatcher()
     let rig: Rig
@@ -307,6 +320,12 @@ final class Show: ObservableObject {
             self?.rig.accent(s)
         }
         // A Launchkey pad hit pokes the screen visualizer where it sits on the pads.
+        rig.onPalette = { [weak self] p in
+            guard let self else { return }
+            self.showColours = Self.three(p)
+            self.screenPalette()
+            self.applyTiles()
+        }
         rig.launchkey.onPad = { [weak self] pad, down in DispatchQueue.main.async { self?.pad(pad, down) } }
         screen.onOpen = { [weak self] open in self?.screenOpen = open; if open { self?.wake() } }
         screen.onSettings = { [weak self] m in
@@ -415,6 +434,7 @@ final class Show: ObservableObject {
             }
             if palette == .single { (t.main, t.second, t.accent) = (paletteColour, paletteColour, paletteColour) }
         }
+        if tilesMatch, showColours.count >= 3 { (t.main, t.second, t.accent) = (showColours[0], showColours[1], showColours[2]) }
         t.brightness = blackout ? 0 : t.brightness * master / 100
         if blackout { t.glow = .off }
         if flash {

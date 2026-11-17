@@ -240,6 +240,13 @@ of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** 
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 - **Off:** the card's normal solid background, even with the app running.
 
+### One palette
+
+Everything wears the show's colours: the palette of the lamp the show is lighting (a Govee
+first), whichever look, recipe or palette set it. The screen visualizer and the Launchkey take
+it as it changes, and TILES does too unless the TILES page is set to its own colours. A single
+colour (One colour) becomes three: itself, a dark and a pale shade.
+
 ### Launchkey MK4
 
 A Novation Launchkey MK4 plugged in joins the show (the TILES page, on by default): in its DAW

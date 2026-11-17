@@ -32,6 +32,10 @@ final class Rig {
     let matter = MatterLights()
     let tiles = TilesLink()
     let launchkey = LaunchkeyLink()
+    // The show's colours: the palette of the lamp it's lighting (a Govee first), on the main queue when
+    // they change, for everything else to wear (the screen, TILES, the Launchkey).
+    var onPalette: (([RGB]) -> Void)?
+    private var showPalette: [RGB] = []
     private var track = (title: "", artist: "")
     func setTrack(_ title: String, _ artist: String) { queue.async { self.track = (title, artist) } }
     private let tilesOwn = 0.012  // USB MIDI and one LED chain write
@@ -467,11 +471,14 @@ final class Rig {
         }
         expireGuesses()
         // TILES: a frame each tick while the music plays (and the ten quiet seconds after).
+        let lead = plan.fixtures.first { driving.contains($0.id) && $0.kind == .govee } ?? plan.fixtures.first { driving.contains($0.id) }
+        if let lead {
+            let p = palette(for: lead.settings.look)
+            if p != showPalette { showPalette = p; DispatchQueue.main.async { self.onPalette?(p) } }
+        }
         if plan.lampsOn && (r.playing || quietFor < 10) {
             tiles.frame(kick: 0, level: energy, bands: r.bands)
-            // The pads in the colours of the lamp the show is lighting now (a Govee first), not the open look's.
-            let lead = plan.fixtures.first { driving.contains($0.id) && $0.kind == .govee } ?? plan.fixtures.first { driving.contains($0.id) }
-            launchkey.frame(dt: dt, bands: r.bands, level: energy, colours: palette(for: lead?.settings.look ?? plan.preview), flash: plan.flash,
+            launchkey.frame(dt: dt, bands: r.bands, level: energy, colours: showPalette.isEmpty ? palette(for: plan.preview) : showPalette, flash: plan.flash,
                             blackout: plan.blackout, title: track.title, artist: track.artist)
         } else {
             launchkey.release()

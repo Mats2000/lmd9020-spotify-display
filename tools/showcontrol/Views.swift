@@ -598,8 +598,10 @@ struct TilesPage: View {
                     VStack(alignment: .leading, spacing: 30) {
                         VStack(alignment: .leading, spacing: 12) {
                             SectionLabel(text: "Colours")
-                            Swatches(colours: colours, fixed: true)
-                            Text("Main, second, accent.").font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
+                            SentiaToggle(title: show.tilesMatch ? "The show's colours" : "Its own colours", on: $show.tilesMatch)
+                            if !show.tilesMatch { Swatches(colours: colours, fixed: true) }
+                            Text(show.tilesMatch ? "The same colours as the lamps, the screen and the Launchkey." : "Main, second, accent.")
+                                .font(.soraLight(11.5)).foregroundColor(Sentia.ink2)
                         }
                         VStack(alignment: .leading, spacing: 12) {
                             SectionLabel(text: "Underglow")
