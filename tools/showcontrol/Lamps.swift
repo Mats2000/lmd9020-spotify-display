@@ -39,7 +39,7 @@ let schemeLampColours: [[RGB]] = [
 
 // A look: how the lamps move with the music. Saved as presets.
 struct LampLook: Codable, Equatable, Identifiable {
-    enum Movement: String, Codable, CaseIterable { case flow, twinkle, flexing, stacking, strike, gradient, chase, pulse, progress }
+    enum Movement: String, Codable, CaseIterable { case flow, twinkle, flexing, stacking, strike, gradient, chase, pulse, progress, wobble }
     enum Source: String, Codable, CaseIterable { case own, cover, scheme }  // own: the colours below
     enum Direction: String, Codable, CaseIterable { case up, down, inward, outward, random }
 
@@ -113,6 +113,7 @@ final class LampEngine {
     // faded across over 1.5 s.
     var songStep = 0
     var progress = 0.0  // how far into the song, 0...1 (the progress movement)
+    var wobble = 0.0    // the bass against its own loud, 0...1, as fast as it moves (the wobble movement)
     private var shownStep = 0, fromColour: RGB?, fade = 1.0
     private var songColour: RGB {
         let c = palette_, to = c[songStep % c.count]
@@ -246,6 +247,13 @@ final class LampEngine {
             }
         case .pulse:
             for i in 0..<n { line[i] = barColour }
+        case .wobble:
+            // A column riding the bass from the bottom, its tip whitening at the top of each swing.
+            let h = (0.12 + 0.88 * wobble) * Double(n)
+            for i in 0..<n where Double(i) < h {
+                let tip = Double(i) >= h - 1
+                line[i] = (tip ? RGB.mix(barColour, RGB(255, 255, 255), wobble * 0.5) : barColour).scaled(tip ? h - Double(i) : 1)
+            }
         case .progress:
             // The song so far lit through the colours, the rest of it faint, the leading edge
             // brightening on the kicks.
@@ -262,7 +270,7 @@ final class LampEngine {
         }
 
         // Brightness with the rhythm: from rhythmLow, quiet, to rhythmHigh on the beat.
-        let drive = min(1, 0.45 * min(1, energy * 1.5) + 0.75 * flash)
+        let drive = look.movement == .wobble ? min(1, 0.2 + 0.8 * wobble + 0.4 * flash) : min(1, 0.45 * min(1, energy * 1.5) + 0.75 * flash)
         let level = (Double(look.rhythmLow) + Double(look.rhythmHigh - look.rhythmLow) * drive) / 100
         return place(line).map { $0.scaled(level) }
     }

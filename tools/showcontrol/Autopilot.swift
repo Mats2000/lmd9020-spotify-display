@@ -7,7 +7,7 @@
 import Foundation
 
 final class Autopilot {
-    enum Style: String, CaseIterable, Codable { case club, lounge, rave }
+    enum Style: String, CaseIterable, Codable { case club, lounge, rave, dubstep }
     enum Tier: String { case calm, groove, peak }
     // A palette for the whole rig, or none (each look its own colours). scheme: the display's.
     enum Palette: String, CaseIterable, Codable {
@@ -50,16 +50,20 @@ final class Autopilot {
                 ("Pace", "How often the look changes."),
                 ("Chaos", "Orderly, through to random colours, directions and picks."),
                 ("Strobe", "How hard the kicks hit the lights.")],
+        .dubstep: [("Weight", "The cover's colours, through to dark ice and Sentia purple."),
+                   ("Wobble", "Drops that flex with the music, through to lamps riding every swing of the bass."),
+                   ("Pace", "How often the look changes."),
+                   ("Drop impact", "A drop as a pulse, through to a full strobe hit.")],
     ]
 
     private func knob(_ i: Int) -> Double { Double(macros[i]) / 100 }  // 0-1
     // How long between changes, times: pace 100 a third, 0 three times (lounge's drift the other way).
     private var pace: Double {
-        let p = knob(style == .lounge ? 3 : 1)
+        let p = knob(style == .lounge ? 3 : style == .dubstep ? 2 : 1)
         return style == .lounge ? pow(3, (p - 0.5) * 2) : pow(3, (0.5 - p) * 2)
     }
     // Where a peak starts: lower with more energy (club) or intensity (rave).
-    private var peakAt: Double { style == .lounge ? 0.72 : 0.72 - (knob(0) - 0.5) * 0.4 }
+    private var peakAt: Double { style == .lounge || style == .dubstep ? 0.72 : 0.72 - (knob(0) - 0.5) * 0.4 }
     private(set) var tier = Tier.groove
     private(set) var recipe: Recipe?
     private(set) var changedAt = Date.distantPast
@@ -134,6 +138,7 @@ final class Autopilot {
         case .club: return bar * 8
         case .lounge: return 45
         case .rave: return bar * 2
+        case .dubstep: return bar * 4
         }
     }
 
@@ -144,6 +149,7 @@ final class Autopilot {
         case .club: return bar * 32
         case .lounge: return 100
         case .rave: return bar * 8
+        case .dubstep: return bar * 16
         }
     }
 
@@ -198,6 +204,21 @@ final class Autopilot {
             let to = d < 0.5 ? soft : deep, t = abs(d - 0.5) * 2
             r.rhythm = (Int(Double(r.rhythm.0) + (to.0 - Double(r.rhythm.0)) * t),
                         Int(Double(r.rhythm.1) + (to.1 - Double(r.rhythm.1)) * t))
+        case .dubstep:
+            let weight = knob(0)
+            if weight < 0.33 { r.source = .cover; r.scheme = "Cover Colours" }
+            else if weight > 0.66 { r.source = .scheme; r.scheme = ["Ice", "Sentia"][pick % 2] }
+            let w = knob(1)
+            if w < 0.3, r.movement == .wobble { r.movement = .flexing }
+            if r.movement == .wobble { r.rhythm.0 = Int((Double(r.rhythm.0) * (1.6 - w * 1.2)).rounded()) }
+            let impact = knob(3)
+            r.kick = Int((Double(r.kick) * (0.6 + 0.8 * impact)).rounded())
+            if lastWasDrop {
+                r.bulb = impact > 0.4 ? .strobe : .pulse
+                r.glow = impact > 0.4 ? .white : .main
+            } else if impact < 0.25, r.bulb == .strobe {
+                r.bulb = .pulse
+            }
         case .rave:
             speed((knob(0) - 0.5) * 2)
             r.rhythm.0 = Int((Double(r.rhythm.0) * (1.4 - knob(0) * 0.8)).rounded())
@@ -243,6 +264,27 @@ final class Autopilot {
                 Recipe(name: "Breath", movement: .flexing, speed: 1, source: .cover, rhythm: (30, 80), bulb: .drift, kick: 30, display: "Classic Glow", scheme: "Cover Colours", tiles: .meter, glow: .main),
                 Recipe(name: "Amber room", movement: .gradient, speed: 1, source: .scheme, rhythm: (40, 75), bulb: .drift, kick: 30, display: "Lava", scheme: "Amber", tiles: .ripple, glow: .main),
                 Recipe(name: "Ice drift", movement: .flow, speed: 2, source: .scheme, direction: .inward, rhythm: (35, 80), bulb: .drift, kick: 60, display: "Fractal", scheme: "Ice", tiles: .spectrum, glow: .second),
+            ]
+        // Dubstep: dark and low in the intros and breakdowns, climbing through the build, and on the
+        // drop the lamps ride the wobble bass while the bulb hits the half-time snare.
+        case (.dubstep, .calm):
+            return [
+                Recipe(name: "Dark matter", movement: .gradient, speed: 1, source: .scheme, rhythm: (8, 50), bulb: .wash, kick: 50, display: "Fractal", scheme: "Ice", tiles: .ripple, glow: .second),
+                Recipe(name: "Low end", movement: .flow, speed: 1, source: .cover, direction: .inward, rhythm: (10, 55), bulb: .wash, kick: 60, display: "Lava", scheme: "Cover Colours", tiles: .spectrum, glow: .second),
+                Recipe(name: "Undertow", movement: .flexing, speed: 2, source: .scheme, rhythm: (5, 60), bulb: .wash, kick: 70, display: "Classic Glow", scheme: "Sentia", tiles: .meter, glow: .main),
+            ]
+        case (.dubstep, .groove):
+            return [
+                Recipe(name: "Build", movement: .stacking, speed: 4, source: .scheme, rhythm: (8, 100), bulb: .pulse, kick: 110, display: "Spectrum", scheme: "Sentia", tiles: .rain, glow: .main),
+                Recipe(name: "Riser", movement: .chase, speed: 4, source: .cover, direction: .outward, rhythm: (10, 95), bulb: .pulse, kick: 100, display: "Pulse Halo", scheme: "Cover Colours", tiles: .chase, glow: .white),
+                Recipe(name: "Pressure", movement: .wobble, speed: 3, source: .scheme, rhythm: (10, 90), bulb: .pulse, kick: 100, display: "Classic Glow", scheme: "Ice", tiles: .meter, glow: .main),
+            ]
+        case (.dubstep, .peak):
+            return [
+                Recipe(name: "Wobble", movement: .wobble, speed: 5, source: .scheme, rhythm: (4, 100), bulb: .strobe, kick: 150, display: "Rave", scheme: "Sentia", tiles: .pulse, glow: .white),
+                Recipe(name: "Wub floor", movement: .wobble, speed: 5, source: .cover, direction: .outward, rhythm: (6, 100), bulb: .strobe, kick: 140, display: "Pulse Halo", scheme: "Cover Colours", tiles: .spectrum, glow: .white),
+                Recipe(name: "Growl", movement: .wobble, speed: 5, source: .scheme, direction: .inward, rhythm: (4, 100), random: true, bulb: .strobe, kick: 150, display: "Fractal", scheme: "Ice", tiles: .sparkle, glow: .white),
+                Recipe(name: "Half-time hit", movement: .strike, speed: 5, source: .scheme, rhythm: (2, 100), bulb: .strobe, kick: 150, display: "Rave", scheme: "Ice", tiles: .pulse, glow: .white),
             ]
         case (.rave, .calm):
             return [

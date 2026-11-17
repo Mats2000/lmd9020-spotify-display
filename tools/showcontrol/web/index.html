@@ -67,6 +67,7 @@ nav[hidden] { display: none; }
 .pilot { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
 .pilot button { text-align: left; border: 1px solid var(--line); border-radius: 18px; background: none; color: var(--text); padding: 16px 14px; min-height: 92px; }
 .pilot button.on { border-color: var(--peri); background: var(--panel); }
+.pilot button:first-child { grid-column: 1 / -1; min-height: 0; }
 .pilot b { display: block; font: 600 20px "Exo 2", sans-serif; }
 .pilot span { display: block; color: var(--ink2); font-size: 12px; margin-top: 4px; line-height: 1.3; }
 .now { border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin-top: 16px; }
@@ -182,7 +183,8 @@ const bpmText = s => (s.playing && s.bpm ? String(s.bpm) : "–");
 const momentText = s => (s.playing ? esc((s.autoTier || "").replace(/^./, c => c.toUpperCase())) : "Paused");
 
 const PILOTS = [["off", "Off", "Everything as you set it"], ["club", "Club", "Follows the song's arc, hits on drops"],
-  ["lounge", "Lounge", "Slow, evolving, never strobes"], ["rave", "Rave", "Maximal, a new look every 8 bars"]];
+  ["lounge", "Lounge", "Slow, evolving, never strobes"], ["rave", "Rave", "Maximal, a new look every 8 bars"],
+  ["dubstep", "Dubstep", "Dark builds, drops that wobble with the bass"]];
 const PALETTES = [["cover", "Cover"], ["sentia", "Sentia"], ["ice", "Ice"], ["sunset", "Sunset"], ["single", "One colour"]];
 
 // The control centre: the autopilot first, then the quick switches.

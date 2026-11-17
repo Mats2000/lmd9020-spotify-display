@@ -48,6 +48,7 @@ final class Rig {
     private var lastStep: [String: Int] = [:], levelAt: [String: Date] = [:], kickedAt: [String: Date] = [:]
     private var matterColour: [String: RGB] = [:], matterLevel: [String: Double] = [:]
     private var cover: [RGB] = [RGB(255, 236, 210)]
+    private var bassPeak = 0.2
     private var energy = 0.0, quietFor = 0.0, lastTick = Date(), statusAt = Date(), timingAt = Date()
     private var live: [String: [RGB]] = [:]
 
@@ -401,12 +402,17 @@ final class Rig {
         let loud = r.playing ? Double(r.bands.reduce(0) { $0 + Int($1) }) / Double(255 * r.bands.count) : 0
         energy += (loud - energy) * min(1, dt * 6)
         followSong(r, dt: dt, now: now)
+        // The wobble: the low mids (85-550 Hz, where a wobble bass's filter swings) against their loud lately.
+        let low = r.playing ? Double(r.bands[2...7].reduce(0) { $0 + Int($1) }) / (255 * 6) : 0
+        bassPeak = max(low, bassPeak * exp(-dt / 6))
+        let wobble = max(0, min(1, (low / max(0.12, bassPeak) - 0.35) / 0.65))
 
         if preview.count != plan.previewSegments { preview = LampEngine(count: plan.previewSegments, look: plan.preview) }
         preview.look = plan.preview
         preview.palette = palette(for: plan.preview)
         preview.songStep = songStep
         preview.progress = progress
+        preview.wobble = wobble
         let shown = preview.frame(dt: dt, energy: r.playing ? energy : 0.35)
 
         for f in plan.fixtures {
@@ -431,6 +437,7 @@ final class Rig {
             e.palette = palette(for: l)
             e.songStep = songStep
             e.progress = progress
+            e.wobble = wobble
             let struck = now.timeIntervalSince(impactAt)
             if struck < 0.45 {
                 if f.kind == .govee {

@@ -107,7 +107,7 @@ struct LivePage: View {
 
     // MARK: The autopilot
 
-    private static let styles: [(Autopilot.Style?, String)] = [(nil, "Off"), (.club, "Club"), (.lounge, "Lounge"), (.rave, "Rave")]
+    private static let styles: [(Autopilot.Style?, String)] = [(nil, "Off"), (.club, "Club"), (.lounge, "Lounge"), (.rave, "Rave"), (.dubstep, "Dubstep")]
 
     private var autopilot: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -122,7 +122,7 @@ struct LivePage: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if s.1 != "Rave" { Rectangle().fill(Sentia.line).frame(width: 1, height: 36) }
+                    if s.1 != Self.styles.last?.1 { Rectangle().fill(Sentia.line).frame(width: 1, height: 36) }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12))

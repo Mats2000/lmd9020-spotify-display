@@ -272,7 +272,8 @@ shows every light found; pick one and set it on its own: on or off, brightness, 
 each kick flashes it, 0-150%) and its own **look**: a movement (Flow, Twinkle, Flexing, Stacking,
 Strike, Gradient, Chase, Pulse, Progress: how far into the song, lit bottom to top through the
 colours with the rest of the song faint and the leading edge brightening on kicks; the position
-comes from Spotify every second), colours (its own, chosen and removed one by one, the cover's or
+comes from Spotify every second; Wobble: a column riding the low mids (85-550 Hz, where a
+wobble bass's filter swings) from the bottom, its brightness with them too), colours (its own, chosen and removed one by one, the cover's or
 the display's scheme, in order or at random, changing with the beat or **with the song**: one
 colour at a time, the next when the song's character changes, as its energy across the bands and
 its loudness over ~1.5 s part from the last ~10 s much more than they usually do in that song),
@@ -290,8 +291,11 @@ arc (washes in breakdowns, grooves in the body, strobes at the peak, a switch on
 look about every 32 bars or at a new section), **Lounge** stays slow and gentle (a change every
 minute or two, never a strobe; the bulb drifts slowly through warm hues, low, unless a palette
 other than Cover is picked), **Rave** goes maximal (strikes and strobes, a new look every
-8 bars). Each style has four macros (Club: energy, pace, colour, drop impact; Lounge: warmth, motion,
-depth, drift; Rave: intensity, pace, chaos, strobe), 50 leaving its looks as they are, and a
+8 bars), **Dubstep** stays dark and low in intros and breakdowns, climbs through the build and on
+the drop has the lamps ride the wobble bass while the bulb strobes (a new look at most every 4
+bars, at least every 16). Each style has four macros (Club: energy, pace, colour, drop impact;
+Lounge: warmth, motion, depth, drift; Rave: intensity, pace, chaos, strobe; Dubstep: weight,
+wobble, pace, drop impact), 50 leaving its looks as they are, and a
 palette can be picked for the whole rig: Cover, Sentia, Ice, Sunset or One colour (none: each look
 its own). The dot beside them sets One colour's colour without choosing it; the display draws it
 as a ramp from dark through the colour to nearly white.
