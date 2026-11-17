@@ -243,14 +243,22 @@ Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 ### Launchkey MK4
 
 A Novation Launchkey MK4 plugged in joins the show (the TILES page, on by default): in its DAW
-mode (Novation's Programmer's Reference Guide) the 16 pads light with the music in the lamps'
-colours, one RGB colour each 30 times a second, a new pattern every 16 kicks (the spectrum
+mode (Novation's Programmer's Reference Guide) the 16 pads light with the music in the colours of
+the lamp the show is lighting (gamma-corrected, since the pad LEDs are linear), one RGB colour
+each 30 times a second, a new pattern every 16 kicks (the spectrum
 across the pads, a light round the two rows, washes on the kicks, sparks on snares over a slow
 wave, the rows trading), and its screen shows the song. Flash whites them, Blackout darkens
 them, an impact bursts them. It's taken only while the music plays and handed back to its
 normal standalone mode ten quiet seconds after (and when the app quits); keys and knobs play
 as always, but the pads don't send their notes while the show has them. A hit pad flashes
 white and pokes the screen visualizer where it sits on the pads.
+
+With **the desk** on (the TILES page, on by default) the patterns fold onto the top row and the
+bottom row is the desk, left to right: **Flash** (held), **Blackout**, **Freeze**, **Impacts**,
+**Next look**, the autopilot's **style** (Off, Club, Lounge, Rave, Dubstep in turn), the **screen**
+visualizer (opens it, then the next scene) and **Lights**. Each glows in its own colour, full
+when on and dim when off, stays lit through a blackout, and the Launchkey's screen says what a
+press changed.
 
 ### This Mac's screen
 

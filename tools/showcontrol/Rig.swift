@@ -469,7 +469,9 @@ final class Rig {
         // TILES: a frame each tick while the music plays (and the ten quiet seconds after).
         if plan.lampsOn && (r.playing || quietFor < 10) {
             tiles.frame(kick: 0, level: energy, bands: r.bands)
-            launchkey.frame(dt: dt, bands: r.bands, level: energy, colours: palette(for: plan.preview), flash: plan.flash,
+            // The pads in the colours of the lamp the show is lighting now (a Govee first), not the open look's.
+            let lead = plan.fixtures.first { driving.contains($0.id) && $0.kind == .govee } ?? plan.fixtures.first { driving.contains($0.id) }
+            launchkey.frame(dt: dt, bands: r.bands, level: energy, colours: palette(for: lead?.settings.look ?? plan.preview), flash: plan.flash,
                             blackout: plan.blackout, title: track.title, artist: track.artist)
         } else {
             launchkey.release()

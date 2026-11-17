@@ -139,6 +139,45 @@ final class Show: ObservableObject {
     @Published var launchkeyOn = UserDefaults.standard.object(forKey: "launchkey") as? Bool ?? true {
         didSet { rig.launchkey.enabled = launchkeyOn }
     }
+    @Published var launchkeyDesk = UserDefaults.standard.object(forKey: "launchkeyDesk") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(launchkeyDesk, forKey: "launchkeyDesk"); deskSync() }
+    }
+    private static let deskStyles: [Autopilot.Style?] = [nil, .club, .lounge, .rave, .dubstep]
+
+    // A Launchkey pad: the bottom row is the desk (Flash held, Blackout, Freeze, Impacts, Next look,
+    // the autopilot's style, the screen visualizer, Lights); the top row, or every pad with the desk
+    // off, pokes the screen visualizer.
+    private func pad(_ p: Int, _ down: Bool) {
+        guard launchkeyDesk, p >= 8 else { if down { screen.hit(p) }; return }
+        let k = p - 8
+        if k == 0 { flash = down; deskSync(); return }
+        guard down else { return }
+        let lk = rig.launchkey, onOff = { (b: Bool) in b ? "On" : "Off" }
+        switch k {
+        case 1: blackout.toggle(); lk.notice("Blackout", onOff(blackout))
+        case 2: freeze.toggle(); lk.notice("Freeze", onOff(freeze))
+        case 3: impacts.toggle(); lk.notice("Impacts", onOff(impacts))
+        case 4:
+            if autopilot != nil { pilot.next(); lk.notice("Next look", liveRecipe?.name ?? "") } else { lk.notice("Next look", "Autopilot is off") }
+        case 5:
+            let i = Self.deskStyles.firstIndex(of: autopilot) ?? 0
+            autopilot = Self.deskStyles[(i + 1) % Self.deskStyles.count]
+            lk.notice("Autopilot", autopilot.map { $0.rawValue.capitalized } ?? "Off")
+        case 6:
+            if !screenOpen { toggleScreen(); lk.notice("Screen", "Full screen") } else {
+                let all = DisplayPage.screenScenes.map(\.0), i = all.firstIndex(of: screenScene) ?? 0
+                screenScene = all[(i + 1) % all.count]
+                lk.notice("Screen", DisplayPage.screenScenes[(i + 1) % all.count].1)
+            }
+        case 7: lampsOn.toggle(); lk.notice("Lights", onOff(lampsOn))
+        default: break
+        }
+        deskSync()
+    }
+    private func deskSync() {
+        rig.launchkey.setDesk(.init(on: launchkeyDesk, flash: flash, blackout: blackout, freeze: freeze, impacts: impacts, lights: lampsOn,
+                                    screen: screenOpen, style: Self.deskStyles.firstIndex(of: autopilot) ?? 0))
+    }
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
 
     // The light open on the Lights page, and its look.
@@ -268,7 +307,7 @@ final class Show: ObservableObject {
             self?.rig.accent(s)
         }
         // A Launchkey pad hit pokes the screen visualizer where it sits on the pads.
-        rig.launchkey.onPad = { pad in DispatchQueue.main.async { screen.hit(pad) } }
+        rig.launchkey.onPad = { [weak self] pad, down in DispatchQueue.main.async { self?.pad(pad, down) } }
         screen.onOpen = { [weak self] open in self?.screenOpen = open; if open { self?.wake() } }
         screen.onSettings = { [weak self] m in
             guard let self else { return }
@@ -433,6 +472,7 @@ final class Show: ObservableObject {
         speakerMs = Int(Sync.speakerDelay * 1000)
         if tilesName != rig.tiles.name { tilesName = rig.tiles.name }
         if launchkeyName != rig.launchkey.name { launchkeyName = rig.launchkey.name }
+        deskSync()  // what the window or the phone changed, on the desk pads within a second
         openAtLogin = SMAppService.mainApp.status == .enabled
         let now = Date()
         if watcher.playing || capture.running || flash || windowVisible || screenOpen || now.timeIntervalSince(phoneWatching) < 60 { busyAt = now }

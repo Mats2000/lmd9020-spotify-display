@@ -1,7 +1,8 @@
 // A Novation Launchkey MK4 as part of the show (its Programmer's Reference Guide, v2): in DAW mode
 // on its DAW port the 16 pads take an RGB colour each and its screen shows the song. Taken while
 // the show plays, handed back (standalone mode) ten quiet seconds after. Pads play patterns from
-// the music in the lamps' colours, a new one every 16 kicks; a hit pad flashes and is passed on.
+// the music in the lamps' colours, a new one every 16 kicks; with the desk on, the bottom row is
+// the desk instead (Show.pad) and the patterns fold onto the top row.
 
 import CoreMIDI
 import Foundation
@@ -16,8 +17,18 @@ final class LaunchkeyLink {
     var enabled = UserDefaults.standard.object(forKey: "launchkey") as? Bool ?? true {
         didSet { UserDefaults.standard.set(enabled, forKey: "launchkey") }
     }
-    var onPad: ((Int) -> Void)?  // a pad hit, 0-7 the top row, 8-15 the bottom (from MIDI's thread)
+    var onPad: ((Int, Bool) -> Void)?  // a pad down or up, 0-7 the top row, 8-15 the bottom (from MIDI's thread)
     private var hits: [Int] = []
+
+    // The desk on the bottom row: each pad's state, lit full when on, dim when off.
+    struct Desk {
+        var on = true
+        var flash = false, blackout = false, freeze = false, impacts = false, lights = true, screen = false
+        var style = 0  // 0 off, then club, lounge, rave, dubstep
+    }
+    private var desk = Desk()
+    func setDesk(_ d: Desk) { lock.lock(); desk = d; lock.unlock() }
+    private static let styleColours = [RGB(90, 90, 90), RGB(255, 0, 255), RGB(255, 150, 40), RGB(0, 220, 255), RGB(130, 40, 255)]
 
     init() {
         MIDIClientCreateWithBlock("Show Control" as CFString, &client) { [weak self] _ in self?.find() }
@@ -61,12 +72,14 @@ final class LaunchkeyLink {
     private func read(_ list: UnsafePointer<MIDIEventList>) {
         for packet in list.unsafeSequence() {
             let word = packet.pointee.words.0, status = UInt8((word >> 16) & 0xFF), note = Int((word >> 8) & 0x7F), vel = word & 0x7F
-            guard status == 0x90, vel > 0, (0x60...0x67).contains(note) || (0x70...0x77).contains(note) else { continue }
-            let pad = note >= 0x70 ? 8 + note - 0x70 : note - 0x60
-            lock.lock()
-            hits.append(pad)
-            lock.unlock()
-            onPad?(pad)
+            guard status == 0x90 || status == 0x80, (0x60...0x67).contains(note) || (0x70...0x77).contains(note) else { continue }
+            let pad = note >= 0x70 ? 8 + note - 0x70 : note - 0x60, down = status == 0x90 && vel > 0
+            if down {
+                lock.lock()
+                hits.append(pad)
+                lock.unlock()
+            }
+            onPad?(pad, down)
         }
     }
 
@@ -107,13 +120,19 @@ final class LaunchkeyLink {
         send([sysex([0x04, 0x20, 0x01]), sysex([0x06, 0x20, 0x00] + clean(title.isEmpty ? "Show Control" : title)),
               sysex([0x06, 0x20, 0x01] + clean(artist.isEmpty ? "Show Control" : artist)), sysex([0x04, 0x20, 0x7F])])
     }
-    var shownTitle: String { titleShown }
+    // A moment on its screen (the global temporary display): what a desk pad just did.
+    func notice(_ name: String, _ value: String) {
+        guard taken else { return }
+        let clean = { (s: String) in Array(s.unicodeScalars.map { $0.value >= 32 && $0.value <= 126 ? UInt8($0.value) : 0x20 }.prefix(20)) }
+        send([sysex([0x04, 0x21, 0x01]), sysex([0x06, 0x21, 0x00] + clean(name)), sysex([0x06, 0x21, 0x01] + clean(value)), sysex([0x04, 0x21, 0x7F])])
+    }
 
     // MARK: Patterns (on the rig's queue)
 
     private var cells = [Double](repeating: 0, count: 48)  // 16 pads, r g b 0-1
     private var prog = 0, kicks = 0, step = 0, burst = 0.0, accentAt = 0.0, t = 0.0, colourAt = 0
     private var palette: [RGB] = [RGB(255, 0, 255)]
+    private var deskGlow = [Double](repeating: 0, count: 8)
     private func colour(_ k: Int) -> RGB { palette[((k % palette.count) + palette.count) % palette.count] }
     private func put(_ pad: Int, _ c: RGB, _ a: Double) {
         guard (0..<16).contains(pad), a > 0 else { return }
@@ -175,13 +194,37 @@ final class LaunchkeyLink {
         let pressed = hits
         hits.removeAll()
         lock.unlock()
-        for p in pressed { put(p, RGB(255, 255, 255), 1) }
+        for p in pressed where !(desk.on && p >= 8) { put(p, RGB(255, 255, 255), 1) }
         if burst > 0.02 { for p in 0..<16 { put(p, RGB.mix(colour(colourAt), RGB(255, 255, 255), 0.5), burst) } }
 
+        lock.lock()
+        let d = desk
+        lock.unlock()
+        var lit = cells
+        if d.on {
+            for c in 0..<8 { for k in 0..<3 { lit[c * 3 + k] = max(lit[c * 3 + k], lit[(8 + c) * 3 + k]) } }  // the patterns on the top row
+            let white = RGB(255, 255, 255)
+            let pads: [(RGB, Bool)] = [(white, d.flash), (RGB(255, 20, 20), d.blackout), (RGB(120, 200, 255), d.freeze),
+                                       (RGB(255, 220, 0), d.impacts), (RGB(255, 0, 255), false),
+                                       (Self.styleColours[max(0, min(4, d.style))], d.style != 0), (RGB(0, 200, 160), d.screen),
+                                       (RGB(40, 255, 60), d.lights)]
+            for (k, (c, on)) in pads.enumerated() {
+                let i = (8 + k) * 3, press = pressed.contains(8 + k) ? 1.0 : 0
+                deskGlow[k] = max(deskGlow[k] * exp(-dt * 5), press)
+                let base = on ? 1 : 0.13
+                lit[i] = min(1, Double(c.r) / 255 * base + deskGlow[k] * 0.8)
+                lit[i + 1] = min(1, Double(c.g) / 255 * base + deskGlow[k] * 0.8)
+                lit[i + 2] = min(1, Double(c.b) / 255 * base + deskGlow[k] * 0.8)
+            }
+        }
         var out: [[UInt8]] = []
         for p in 0..<16 {
-            var r = cells[p * 3], g = cells[p * 3 + 1], b = cells[p * 3 + 2]
-            if flash { r = 1; g = 1; b = 1 } else if blackout { r = 0; g = 0; b = 0 }
+            var r = lit[p * 3], g = lit[p * 3 + 1], b = lit[p * 3 + 2]
+            if flash && !(d.on && p >= 8) { r = 1; g = 1; b = 1 } else if blackout && !(d.on && p >= 8) { r = 0; g = 0; b = 0 }
+            // LEDs are linear: the weaker channels taken down (gamma 2.2 against the strongest) so a hue
+            // reads as it does on the lamps and the screen, its brightness kept.
+            let top = max(r, g, b)
+            if top > 0 { r = top * pow(r / top, 2.2); g = top * pow(g / top, 2.2); b = top * pow(b / top, 2.2) }
             let id = UInt8(p < 8 ? 0x60 + p : 0x70 + p - 8)
             out.append(sysex([0x01, 0x43, id, Self.seven(r), Self.seven(g), Self.seven(b)]))
         }

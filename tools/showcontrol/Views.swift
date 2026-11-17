@@ -626,9 +626,12 @@ struct TilesPage: View {
                         SentiaToggle(title: show.launchkeyOn ? "Its pads are the show's" : "Take over its pads", on: $show.launchkeyOn)
                     }
                     .frame(maxWidth: 520)
+                    if show.launchkeyName != nil {
+                        SentiaToggle(title: show.launchkeyDesk ? "Bottom row: the desk" : "Bottom row: the show", on: $show.launchkeyDesk)
+                    }
                     Text(show.launchkeyName == nil
                          ? "Not connected. Plug in a Launchkey MK4 and its 16 pads join the show."
-                         : "Its 16 pads play patterns from the music in the lamps' colours and its screen shows the song, while the music plays; ten quiet seconds after, it's back to normal. A hit pad flashes and pokes the screen visualizer. Keys and knobs play as always; the pads don't send notes while the show has them.")
+                         : "Its 16 pads play patterns from the music in the lamps' colours and its screen shows the song, while the music plays; ten quiet seconds after, it's back to normal. A hit pad flashes and pokes the screen visualizer. With the desk, the bottom row is, left to right: Flash (hold), Blackout, Freeze, Impacts, Next look, the autopilot's style, the screen visualizer (open, then next scene), Lights; each lit when on, dim when off, and its screen says what changed. Keys and knobs play as always; the pads don't send notes while the show has them.")
                         .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.top, 32).padding(.bottom, 40)
