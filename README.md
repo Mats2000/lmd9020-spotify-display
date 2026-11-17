@@ -249,7 +249,11 @@ the look of 90s consoles: everything rendered at 240 lines (or 480, softer), a w
 screen pixels per pixel (a 1440-line ultrawide: 6 or 3), vertices snapped to that grid,
 textures mapped without perspective correction so they swim, and the colour dithered to 5 bits
 (6 at 480). **Native** draws the same scenes at the screen's own resolution instead: smoothed
-edges, true perspective, no dither, and a glow round the bright parts. Five scenes, all abstract:
+edges, true perspective, no dither, and a glow round the bright parts. The camera runs itself:
+each scene has a handful of shots (a glide, a crane, an orbit, down a street, along a tunnel
+wall...), and every 16-24 kicks it moves to another, gliding or cutting on the beat, cutting at
+once on an impact. Nine scenes, all abstract, the old-school ones written from the classic
+demo effects rather than copied:
 
 - **Polygon Sea:** a flat-shaded sea heaving with the bass, the spectrum rolling across it, a
   low-poly sun, rings spreading from each kick.
@@ -260,8 +264,15 @@ edges, true perspective, no dither, and a glow round the bright parts. Five scen
   streaming past.
 - **Dither Field:** metaballs and plasma in contour bands through the palette, the waveform
   drawn across.
+- **Light Grid:** a wall of big glowing tiles (fine, or a few huge ones) running light-show
+  patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing
+  checker, life stepping on the beat, wipes, sparkle, pulses from the middle.
+- **Voxel Hills:** a flight low over terraced block hills, ridges rising with the spectrum
+  (native draws it at half resolution).
+- **Rotozoom:** a tiled pattern turning and zooming, its colours cycling.
+- **Raster Bars:** shaded colour bars swinging past and a four-sided ribbon twisting through.
 
-**Auto** moves to the next scene with each song (and every 2.5 minutes). On the screen: 1-5
+**Auto** moves to the next scene with each song (and every 2.5 minutes). On the screen: 1-9
 pick a scene (0 back to Auto, the arrows step), the pointer looks around, a drag steers, a
 click hits (a ripple, rings, a burst, a blob), the wheel sets the speed, space flashes white, P
 steps through 240, 480 and native, T the song title, H the keys, Esc (or leaving full screen) closes it. Flash
@@ -300,7 +311,8 @@ each kick flashes it, 0-150%) and its own **look**: a movement (Flow, Twinkle, F
 Strike, Gradient, Chase, Pulse, Progress: how far into the song, lit bottom to top through the
 colours with the rest of the song faint and the leading edge brightening on kicks; the position
 comes from Spotify every second; Wobble: a column riding the low mids (85-550 Hz, where a
-wobble bass's filter swings) from the bottom, its brightness with them too), colours (its own, chosen and removed one by one, the cover's or
+wobble bass's filter swings) from the bottom, its brightness with them too, a new colour each
+swing with the next one faint above, white for a moment on a snare), colours (its own, chosen and removed one by one, the cover's or
 the display's scheme, in order or at random, changing with the beat or **with the song**: one
 colour at a time, the next when the song's character changes, as its energy across the bands and
 its loudness over ~1.5 s part from the last ~10 s much more than they usually do in that song),
@@ -320,7 +332,7 @@ minute or two, never a strobe; the bulb drifts slowly through warm hues, low, un
 other than Cover is picked), **Rave** goes maximal (strikes and strobes, a new look every
 8 bars), **Dubstep** stays dark and low in intros and breakdowns, climbs through the build and on
 the drop has the lamps ride the wobble bass while the bulb strobes (a new look at most every 4
-bars, at least every 16). Each style has four macros (Club: energy, pace, colour, drop impact;
+bars, at least every 16, every 8 in a drop). Each style has four macros (Club: energy, pace, colour, drop impact;
 Lounge: warmth, motion, depth, drift; Rave: intensity, pace, chaos, strobe; Dubstep: weight,
 wobble, pace, drop impact), 50 leaving its looks as they are, and a
 palette can be picked for the whole rig: Cover, Sentia, Ice, Sunset or One colour (none: each look

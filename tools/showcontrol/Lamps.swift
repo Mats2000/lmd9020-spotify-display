@@ -156,9 +156,12 @@ final class LampEngine {
         switch look.movement {
         case .twinkle: if spots.count < look.spotsHigh + 2 { spawn(short: true) }
         case .chase, .flow, .gradient: flash = max(flash, 0.2 * Double(strength))
+        case .wobble: snare = max(snare, Double(strength))  // the column goes white for a moment
+        case .stacking where strength > 0.7: stacked = stacked >= span ? 0 : stacked + 1  // a snare roll climbs it too
         default: break
         }
     }
+    private var snare = 0.0, swings = 0, swingUp = false
 
     private func spawn(short: Bool = false) {
         let size = Double(Int.random(in: look.sizeLow...max(look.sizeLow, look.sizeHigh))) / 10 * Double(span) * 0.5
@@ -248,11 +251,20 @@ final class LampEngine {
         case .pulse:
             for i in 0..<n { line[i] = barColour }
         case .wobble:
-            // A column riding the bass from the bottom, its tip whitening at the top of each swing.
-            let h = (0.12 + 0.88 * wobble) * Double(n)
-            for i in 0..<n where Double(i) < h {
-                let tip = Double(i) >= h - 1
-                line[i] = (tip ? RGB.mix(barColour, RGB(255, 255, 255), wobble * 0.5) : barColour).scaled(tip ? h - Double(i) : 1)
+            // A column riding the bass from the bottom, a new colour each swing, the next one faint
+            // above it, its tip whitening at the top of each swing and all of it on a snare.
+            if wobble > 0.75 && !swingUp { swingUp = true; swings += 1 }
+            if wobble < 0.35 { swingUp = false }
+            snare *= exp(-dt * 12)
+            let now = c[swings % c.count], next = c[(swings + 1) % c.count], h = (0.12 + 0.88 * wobble) * Double(n)
+            for i in 0..<n {
+                if Double(i) < h {
+                    let tip = Double(i) >= h - 1
+                    let lit = tip ? RGB.mix(now, RGB(255, 255, 255), wobble * 0.5) : now
+                    line[i] = RGB.mix(lit, RGB(255, 255, 255), snare * 0.7).scaled(tip ? max(0.3, h - Double(i)) : 1)
+                } else {
+                    line[i] = next.scaled(0.12 + snare * 0.3)
+                }
             }
         case .progress:
             // The song so far lit through the colours, the rest of it faint, the leading edge

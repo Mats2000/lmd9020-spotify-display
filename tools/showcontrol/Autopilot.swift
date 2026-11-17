@@ -149,7 +149,7 @@ final class Autopilot {
         case .club: return bar * 32
         case .lounge: return 100
         case .rave: return bar * 8
-        case .dubstep: return bar * 16
+        case .dubstep: return tier == .peak ? bar * 8 : bar * 16  // drops move faster
         }
     }
 

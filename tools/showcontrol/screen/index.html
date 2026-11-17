@@ -18,7 +18,7 @@ body.idle { cursor: none; }
 </head>
 <body>
 <div class="tag" id="name"></div>
-<div class="tag" id="help">1–5 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p / native · T title · H help · Esc close</div>
+<div class="tag" id="help">1–9 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p / native · T title · H help · Esc close</div>
 <script src="three.min.js"></script>
 <script>
 "use strict";
@@ -45,9 +45,9 @@ window.feed = (level, beat, bands, wave) => {
   for (let i = 0; i < 16; i++) S.target[i] = (bands[i] || 0) / 255;
   for (let i = 0; i < 64; i++) S.wave[i] = (wave[i] || 0) / 128;
 };
-window.kick = (s) => { S.kick = Math.max(S.kick, 0.55 + 0.45 * s); scene().kick?.(s); };
+window.kick = (s) => { S.kick = Math.max(S.kick, 0.55 + 0.45 * s); scene().kick?.(s); director.kick(); };
 window.accent = (s) => scene().accent?.(s);
-window.impact = () => { S.impact = 1; scene().impact?.(); };
+window.impact = () => { S.impact = 1; scene().impact?.(); director.impact(); };
 window.flash = (on) => { S.held = on; };
 window.song = (title, artist, colours) => {
   if (colours && colours.length) setPalette(colours);
@@ -159,9 +159,48 @@ const tint = (mesh) => mesh.material.uniforms.tint.value;
 
 // The pointer: where it is (smoothed), how far it has dragged, the wheel's warp.
 const input = { x: 0, y: 0, tx: 0, ty: 0, dragX: 0, dragY: 0, warp: 1 };
-function look(camera, at, swing = 1) {
-  camera.lookAt(at.x + input.x * 10 * swing, at.y - input.y * 6 * swing, at.z);
+// The director: a scene's shots are functions of the time and the time into the shot, giving
+// numbers (a camera's position, what it looks at and its roll, or a shader's own camera). Every
+// 16-24 kicks it moves to another, gliding or cutting on the beat; an impact cuts at once.
+const director = {
+  shot: 0, from: null, last: null, b: 1, u: 0, kicks: 0, blend: 3, quiet: 0, count: 0,
+  reset(n) { this.count = n; this.shot = Math.floor(Math.random() * Math.max(1, n)); this.from = null; this.b = 1; this.u = 0; this.kicks = 0; },
+  next(cut) {
+    if (this.count < 2) return;
+    let k;
+    do k = Math.floor(Math.random() * this.count); while (k === this.shot);
+    this.from = cut || !this.last ? null : this.last.slice();
+    this.shot = k; this.u = 0; this.b = this.from ? 0 : 1;
+    this.blend = rand(2.5, 4.5);
+  },
+  kick() { this.quiet = 0; if (++this.kicks >= (S.energy > 0.5 ? 16 : 24)) { this.kicks = 0; this.next(Math.random() < 0.5); } },
+  impact() { this.kicks = 0; this.next(true); },
+  frame(shots, t, dt) {
+    this.u += dt;
+    if ((this.quiet += dt) > 20) { this.quiet = 0; this.next(false); }
+    this.b = Math.min(1, this.b + dt / this.blend);
+    const cur = shots[this.shot % shots.length](t, this.u), e = this.b * this.b * (3 - 2 * this.b);
+    this.last = this.from ? cur.map((v, i) => this.from[i] + (v - this.from[i]) * e) : cur;
+    return this.last;
+  },
+};
+// A shot onto a camera: [x, y, z, look x, y, z, roll]; a drag turns it round what it looks at.
+function aim(camera, v) {
+  const dx = v[0] - v[3], dz = v[2] - v[5], c = Math.cos(input.dragX), s = Math.sin(input.dragX);
+  camera.position.set(v[3] + dx * c - dz * s, v[1] + input.dragY * 12, v[5] + dx * s + dz * c);
+  camera.lookAt(v[3] + input.x * 8, v[4] - input.y * 5, v[5]);
+  if (v[6]) camera.rotateZ(v[6]);
 }
+const FLATV = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`;
+// A palette ramp for the shader scenes: dark, c0, c1, c2, dark again.
+const RAMP = `
+  vec3 ramp(float s) {
+    s = fract(s) * 4.;
+    if (s < 1.) return mix(c2 * 0.15, c0, s);
+    if (s < 2.) return mix(c0, c1, s - 1.);
+    if (s < 3.) return mix(c1, c2, s - 2.);
+    return mix(c2, c2 * 0.15, s - 3.);
+  }`;
 
 // MARK: Polygon Sea: a flat-shaded sea heaving with the bass, the spectrum rolling across it,
 // rings spreading from kicks and clicks.
@@ -205,9 +244,15 @@ function makeSea() {
       sun.rotation.x += dt * 0.15;
       shared.fogColor.value.copy(pal(2)).multiplyScalar(0.1);
       shared.fogNear.value = 18; shared.fogFar.value = 85;
-      camera.position.set(Math.sin(t * 0.07) * 6 + input.dragX * 20, 11 + input.dragY * 10, 44);
-      look(camera, { x: 0, y: 2, z: -20 });
     },
+    shots: [
+      (t) => [Math.sin(t * 0.07) * 6, 11, 44, 0, 2, -20],                                              // the glide
+      (t) => [Math.sin(t * 0.2) * 12, 3.4 + S.bass * 1.5, 30, Math.sin(t * 0.2 + 0.5) * 16, 4, -40, Math.sin(t * 0.3) * 0.08],  // skimming
+      (t, u) => [0, 36 + Math.sin(u * 0.2) * 4, Math.max(-10, 32 - u * 0.9), 0, 0, -14],                // the crane
+      (t) => [Math.sin(t * 0.08) * 50, 14, Math.cos(t * 0.08) * 50, 0, 1, 0],                          // round the sea
+      (t, u) => [0, 6, 52 - Math.min(u, 35), 0, 13, -90],                                               // into the sun
+      (t, u) => [-70 + (u * 3.5) % 140, 7, 12, -50 + (u * 3.5) % 140, 3, -25],                         // tracking
+    ],
     kick(s) { ripple(rand(-70, 70), rand(-35, 25), 1.2 + s); },
     impact() { ripple(0, 10, 7); },
     click(nx, ny) {
@@ -253,12 +298,16 @@ function makeTowers() {
       mesh.instanceColor.needsUpdate = true;
       tint(floor).copy(pal(1)).multiplyScalar(0.5 + S.kick * 0.5);
       spin += dt * (0.06 + S.energy * 0.14) * S.speed;
-      const a = spin + input.dragX * 3, centre = { x: 0, y: 2, z: -16 };
-      camera.position.set(Math.sin(a) * 30, 13 + input.dragY * 14 + S.bass * 3, centre.z + Math.cos(a) * 30);
-      look(camera, centre, 0.6);
       shared.fogColor.value.copy(pal(2)).multiplyScalar(0.07);
       shared.fogNear.value = 25; shared.fogFar.value = 75;
     },
+    shots: [
+      () => [Math.sin(spin) * 30, 13 + S.bass * 3, -16 + Math.cos(spin) * 30, 0, 2, -16],              // round the city
+      (t, u) => [0, 1.6, 14 - (u * 5) % 75, 0, 2.2, 2 - (u * 5) % 75],                                  // down the street
+      () => [Math.sin(spin * 0.7) * 6, 46, -16 + Math.cos(spin * 0.7) * 6, 0, 0, -16],                  // from above
+      (t) => [Math.sin(t * 0.15) * 14, 3, 14, 0, 5, -10],                                              // the front row
+      (t) => [-42 + Math.sin(t * 0.05) * 6, 26, 22, 0, 0, -22],                                         // wide
+    ],
     impact() { boost = 1.4; },
     click() { boost = 1; },
   };
@@ -319,10 +368,19 @@ function makeTunnel() {
         tint(r).copy(pal(r.userData.c)).lerp(WHITE, S.kick * 0.4);
         if (r.position.z > 4) r.visible = false;
       }
-      camera.position.set(Math.sin(t * 0.5) * 1.6 * (0.4 + S.bass), Math.cos(t * 0.37) * 1.2, 0);
-      camera.rotation.set(-input.y * 0.35 + input.dragY, -input.x * 0.45 + input.dragX, Math.sin(t * 0.17) * 0.25);
       shared.fogColor.value.set(0, 0, 0);
       shared.fogNear.value = 6; shared.fogFar.value = 78;
+    },
+    shots: [
+      (t) => [Math.sin(t * 0.5) * 1.6 * (0.4 + S.bass), Math.cos(t * 0.37) * 1.2, 0, 0, 0, -30, Math.sin(t * 0.17) * 0.25],
+      (t) => [Math.cos(t * 0.3) * 3.4, Math.sin(t * 0.3) * 3.4, 0, 0, 0, -30, (t * 0.3) % 6.283],     // along the wall
+      (t) => [0, 0, 0, Math.sin(t * 0.4) * 2, Math.cos(t * 0.3) * 2, -30, (t * 0.9) % 6.283],         // spinning
+      (t) => [Math.sin(t * 1.3) * 2, Math.sin(t * 0.9) * 2, 0, Math.sin(t * 1.3 + 1) * 4, Math.sin(t * 0.9 + 1) * 4, -30, Math.sin(t * 0.6) * 0.6],
+    ],
+    aim(v) {  // stays in the tube: the pointer and a drag turn the head, not the camera
+      camera.position.set(v[0], v[1], v[2]);
+      camera.lookAt(v[3] - input.x * 9, v[4] + input.y * 6, v[5]);
+      camera.rotateZ(v[6] + input.dragX);
     },
     kick() { spawn(); },
     impact() { for (let i = 0; i < 5; i++) spawn(-95 + i * 14); },
@@ -388,11 +446,16 @@ function makeCrystal() {
       starGeo.attributes.position.needsUpdate = true;
       starMat.color.copy(pal(1)).lerp(WHITE, 0.6);
       starMat.size = Math.max(2, low.y / 200);
-      camera.position.set(input.x * 7, -input.y * 5, 34 - S.bass * 3);
-      camera.lookAt(0, 0, 0);
       shared.fogColor.value.copy(pal(2)).multiplyScalar(0.05);
       shared.fogNear.value = 60; shared.fogFar.value = 200;
     },
+    shots: [
+      () => [0, 0, 34 - S.bass * 3, 0, 0, 0],
+      (t) => [Math.sin(t * 0.2) * 20, Math.sin(t * 0.13) * 6, Math.cos(t * 0.2) * 20, 0, 0, 0],       // close round it
+      (t) => [30 + Math.sin(t * 0.05) * 5, 26, 40, 0, -2, 0],                                          // wide
+      (t) => [Math.sin(t * 0.12) * 13, 1.5, Math.cos(t * 0.12) * 13, Math.sin(t * 0.12 + 0.6) * 13, 0, Math.cos(t * 0.12 + 0.6) * 13],  // with the shards
+      (t) => [Math.sin(t * 0.1) * 3, 40, Math.cos(t * 0.1) * 3, 0, 0, 0],                             // from above
+    ],
     impact() { burst = 1.6; },
     click() { burst = 1; },
   };
@@ -405,22 +468,18 @@ function makeField() {
   const mat = new THREE.ShaderMaterial({
     uniforms: { time: { value: 0 }, aspect: { value: 1.33 }, bands: { value: new Float32Array(16) }, wave: { value: new Float32Array(64) },
       level: { value: 0 }, kick: { value: 0 }, c0: { value: new THREE.Color() }, c1: { value: new THREE.Color() }, c2: { value: new THREE.Color() },
+      zoom: { value: 1 }, turn: { value: 0 },
       blobs: { value: Array.from({ length: 6 }, () => new THREE.Vector3(0, 0, 99)) } },
     vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
     fragmentShader: `
-      uniform float time, aspect, level, kick; uniform float bands[16]; uniform float wave[64];
+      uniform float time, aspect, level, kick, zoom, turn; uniform float bands[16]; uniform float wave[64];
       uniform vec3 c0, c1, c2; uniform vec3 blobs[6]; varying vec2 vUv;
-      vec3 ramp(float s) {
-        s = fract(s) * 4.;
-        if (s < 1.) return mix(c2 * 0.15, c0, s);
-        if (s < 2.) return mix(c0, c1, s - 1.);
-        if (s < 3.) return mix(c1, c2, s - 2.);
-        return mix(c2, c2 * 0.15, s - 3.);
-      }
+      ${RAMP}
       void main() {
         vec2 uv = vUv * 2. - 1.;
         uv.x *= aspect;
-        uv *= 1. - kick * 0.08;
+        uv *= (1. - kick * 0.08) * zoom;
+        uv = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * uv;
         float v = 0.;
         for (int i = 0; i < 5; i++) {
           float f = float(i);
@@ -458,24 +517,406 @@ function makeField() {
       u.c0.value.copy(pal(0)); u.c1.value.copy(pal(1)); u.c2.value.copy(pal(2));
       for (const b of u.blobs.value) b.z += dt;
     },
+    shots: [() => [1, 0], (t) => [0.6, t * 0.05], (t) => [1.5, -t * 0.03], (t) => [0.8 + Math.sin(t * 0.2) * 0.3, Math.sin(t * 0.1) * 0.6]],
+    aim(v) { mat.uniforms.zoom.value = v[0]; mat.uniforms.turn.value = v[1]; },
     click(nx, ny) { mat.uniforms.blobs.value[n++ % 6].set(nx * mat.uniforms.aspect.value, ny, 0); },
     impact() { mat.uniforms.blobs.value[n++ % 6].set(0, 0, 0); },
   };
 }
 
+// MARK: Light Grid: a wall of big tiles (fine, or a few huge ones) playing light-show patterns,
+// a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing checker,
+// life stepping on the beat, wipes, sparkle, pulses from the middle.
+function makeGrid() {
+  const scene = new THREE.Scene();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { cells: { value: null }, grid: { value: new THREE.Vector2(1, 1) } },
+    vertexShader: FLATV,
+    fragmentShader: `
+      uniform sampler2D cells; uniform vec2 grid; varying vec2 vUv;
+      vec3 cellAt(vec2 c) {
+        if (c.x < 0. || c.y < 0. || c.x >= grid.x || c.y >= grid.y) return vec3(0.);
+        return texture2D(cells, (c + 0.5) / grid).rgb;
+      }
+      void main() {
+        vec2 g = vUv * grid, c = floor(g), f = fract(g) - 0.5;
+        vec2 q = abs(f) - 0.4;
+        float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - 0.04;
+        float tile = 1. - smoothstep(-0.02, 0.02, d);
+        vec3 col = cellAt(c) * tile * (0.88 + 0.12 * (1. - length(f) * 1.6));
+        vec3 halo = vec3(0.);
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+          vec2 o = vec2(float(x), float(y));
+          float dd = length(g - (c + o + 0.5));
+          halo += cellAt(c + o) * exp(-dd * dd * 2.2);
+        }
+        col += halo * 0.3 * (1. - tile * 0.6) + vec3(0.03) * tile;
+        gl_FragColor = vec4(col, 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
+  let cols = 1, rows = 1, cells = new Float32Array(3), data, tex, big = false, aspect = 1.33;
+  let prog = "bars", kicks = 0, hue = 0, quiet = 0, st = {};
+  function layout() {
+    rows = big ? 4 : 12;
+    cols = Math.max(4, Math.round(rows * aspect));
+    cells = new Float32Array(cols * rows * 3);
+    data = new Uint8Array(cols * rows * 4).fill(255);
+    tex?.dispose();
+    tex = new THREE.DataTexture(data, cols, rows, THREE.RGBAFormat);
+    tex.magFilter = tex.minFilter = THREE.NearestFilter;
+    tex.needsUpdate = true;
+    mat.uniforms.cells.value = tex;
+    mat.uniforms.grid.value.set(cols, rows);
+    st = {};
+  }
+  const put = (x, y, c, a = 1) => {
+    x = Math.round(x); y = Math.round(y);
+    if (x < 0 || y < 0 || x >= cols || y >= rows || a <= 0) return;
+    const i = (y * cols + x) * 3;
+    cells[i] = Math.max(cells[i], c.r * a); cells[i + 1] = Math.max(cells[i + 1], c.g * a); cells[i + 2] = Math.max(cells[i + 2], c.b * a);
+  };
+  const ri = (n) => Math.floor(Math.random() * n);
+  const col = (k) => pal(hue + k);
+  const progs = {
+    bars: { decay: 16, frame() {
+      for (let x = 0; x < cols; x++) {
+        const h = S.bands[Math.min(15, Math.floor(x / cols * 16))] * rows * 1.15;
+        for (let y = 0; y < h; y++) put(x, y, h > 1 && y >= Math.floor(h) - 1 ? col(2).clone().lerp(WHITE, 0.55) : col(Math.floor(y / rows * 3)), 1);
+      }
+    } },
+    mirror: { decay: 12, frame() {
+      const mid = (rows - 1) / 2;
+      for (let x = 0; x < cols; x++) {
+        const h = S.bands[Math.min(15, Math.floor(Math.abs(x - (cols - 1) / 2) / cols * 2 * 16))] * rows * 0.6;
+        for (let y = 0; y < rows; y++) if (Math.abs(y - mid) < h) put(x, y, col(Math.abs(y - mid) > h - 1 ? 1 : 0), 1);
+      }
+    } },
+    ripple: { decay: 7, kick(s) { (st.r ||= []).push({ x: ri(cols), y: ri(rows), r: 0, c: col(st.r.length) }); },
+      frame(dt) {
+        for (const g of st.r || []) {
+          g.r += dt * Math.max(cols, rows) * 0.55;
+          for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+            const d = Math.abs(Math.hypot(x - g.x, y - g.y) - g.r);
+            if (d < 0.8) put(x, y, g.c, (1 - d / 0.8) * Math.max(0, 1 - g.r / (cols * 0.8)));
+          }
+        }
+        st.r = (st.r || []).filter((g) => g.r < cols);
+      } },
+    rain: { decay: 6, kick() { for (let x = 0; x < cols; x += 2) (st.d ||= []).push({ x: x + ri(2), y: rows, v: rand(6, 12), c: col(ri(3)) }); },
+      frame(dt) {
+        st.d ||= [];
+        if (Math.random() < S.high * 3 * dt * cols) st.d.push({ x: ri(cols), y: rows, v: rand(5, 10), c: col(ri(3)) });
+        for (const d of st.d) { d.y -= dt * d.v * (rows / 12); put(d.x, d.y, d.c, 1); }
+        st.d = st.d.filter((d) => d.y > -1);
+      } },
+    scanner: { decay: 10, kick() { st.hit = 1; },
+      frame(dt, t) {
+        st.hit = (st.hit || 0) * Math.exp(-dt * 6);
+        for (let b = 0; b < 3; b++) {
+          const x = (Math.sin(t * (0.7 + b * 0.31) * S.speed + b * 2.1) * 0.5 + 0.5) * (cols - 1);
+          for (let y = 0; y < rows; y++) for (let k = -1; k <= 1; k++) put(x + k, y, col(b).clone().lerp(WHITE, st.hit * 0.6), k ? 0.35 + st.hit * 0.4 : 1);
+        }
+      } },
+    checker: { decay: 5, kick() { st.p = 1 - (st.p || 0); st.n = (st.n || 0) + 1; st.f = 1; },
+      frame(dt) {
+        st.f = (st.f || 0) * Math.exp(-dt * 3);
+        const c = col(Math.floor((st.n || 0) / 4)), s = big ? 1 : 2;
+        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if ((Math.floor(x / s) + Math.floor(y / s)) % 2 === (st.p || 0)) put(x, y, c, st.f);
+      } },
+    life: { decay: 9,
+      kick() {
+        let g = st.g, n = 0;
+        if (!g || st.still > 3) { g = st.g = Uint8Array.from({ length: cols * rows }, () => (Math.random() < 0.35 ? 1 : 0)); st.age = new Uint16Array(cols * rows); st.still = 0; return; }
+        const next = new Uint8Array(cols * rows);
+        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+          let k = 0;
+          for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) k += g[((y + j + rows) % rows) * cols + (x + i + cols) % cols];
+          const a = g[y * cols + x];
+          next[y * cols + x] = (a && (k === 2 || k === 3)) || (!a && k === 3) ? 1 : 0;
+          n += next[y * cols + x];
+        }
+        st.still = n < 6 || next.every((v, i) => v === g[i]) ? (st.still || 0) + 1 : 0;
+        for (let i = 0; i < next.length; i++) st.age[i] = next[i] ? st.age[i] + 1 : 0;
+        st.g = next;
+      },
+      frame() {
+        if (!st.g) this.kick();
+        for (let i = 0; i < st.g.length; i++) if (st.g[i]) put(i % cols, Math.floor(i / cols), col(Math.min(2, st.age[i] >> 1)), 1);
+      } },
+    wipe: { decay: 5, kick() { st.w = { pos: -3, dir: ri(4), c: col(ri(3)) }; },
+      frame(dt) {
+        const w = st.w;
+        if (!w) return;
+        w.pos += dt * (cols + rows) * 1.1;
+        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+          const k = [x + y, cols - x + y, x + rows - y, cols - x + rows - y][w.dir];
+          if (k > w.pos - 2 && k <= w.pos) put(x, y, w.c, 1 - (w.pos - k) / 2);
+        }
+      } },
+    sparkle: { decay: 9, kick() { for (let i = 0; i < cols * rows * 0.15; i++) put(ri(cols), ri(rows), col(ri(3)).clone().lerp(WHITE, 0.4), 1); },
+      frame(dt) { for (let i = 0; i < S.high * cols * rows * dt * 6; i++) put(ri(cols), ri(rows), col(ri(3)), 1); } },
+    pulse: { decay: 5, kick() { (st.p ||= []).push({ r: 0, c: col((st.n = (st.n || 0) + 1)) }); },
+      frame(dt) {
+        const cx = (cols - 1) / 2, cy = (rows - 1) / 2;
+        for (const p of st.p || []) {
+          p.r += dt * cols * 0.4;
+          for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+            const d = Math.abs(Math.max(Math.abs(x - cx) * rows / cols * 1.8, Math.abs(y - cy)) * cols / rows / 1.8 - p.r);
+            if (d < 0.7) put(x, y, p.c, 1 - d / 0.7);
+          }
+        }
+        st.p = (st.p || []).filter((p) => p.r < cols);
+      } },
+  };
+  const names = Object.keys(progs);
+  function change(cut) {
+    let k;
+    do k = names[ri(names.length)]; while (k === prog);
+    prog = k;
+    hue = ri(3);
+    const wasBig = big;
+    big = Math.random() < 0.3;
+    if (big !== wasBig) layout(); else st = {};
+    if (cut) cells.fill(0);
+  }
+  layout();
+  return {
+    scene, camera: flat,
+    resize(a) { if (Math.abs(a - aspect) > 0.01) { aspect = a; layout(); } },
+    update(dt, t) {
+      if ((quiet += dt) > 12) { quiet = 0; change(false); }
+      const k = Math.exp(-dt * progs[prog].decay * (0.6 + S.speed * 0.4));
+      for (let i = 0; i < cells.length; i++) cells[i] *= k;
+      progs[prog].frame(dt, t);
+      for (let i = 0, j = 0; i < cells.length; i += 3, j += 4) {
+        data[j] = Math.min(255, cells[i] * 255); data[j + 1] = Math.min(255, cells[i + 1] * 255); data[j + 2] = Math.min(255, cells[i + 2] * 255);
+      }
+      tex.needsUpdate = true;
+    },
+    kick(s) {
+      quiet = 0;
+      progs[prog].kick?.(s);
+      if (++kicks >= 16) { kicks = 0; change(false); }
+    },
+    impact() { kicks = 0; change(true); for (let i = 0; i < cells.length; i++) cells[i] = 1; },
+    click(nx, ny) {
+      const x = (nx * 0.5 + 0.5) * cols - 0.5, y = (ny * 0.5 + 0.5) * rows - 0.5;
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) put(x + i, y + j, WHITE, i || j ? 0.6 : 1);
+      progs[prog].kick?.(1);
+    },
+  };
+}
+
+// MARK: Voxel Hills: a flight low over blocky hills, ridges rising with the spectrum, the sky in the
+// palette. One raymarch per pixel over a sum of waves; native resolution draws it at half.
+const hills = (x, z) => {
+  x = Math.floor(x / 5) * 5; z = Math.floor(z / 5) * 5;
+  return Math.floor((Math.sin(x * 0.031) * Math.cos(z * 0.027) * 22 + Math.sin(x * 0.083 + z * 0.061) * 9 + Math.cos(z * 0.12 - x * 0.04) * 4) / 3) * 3;
+};
+function makeVoxel() {
+  const scene = new THREE.Scene();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { aspect: { value: 1.33 }, cam: { value: new THREE.Vector3() }, yaw: { value: 0 }, pitch: { value: 0 }, bank: { value: 0 },
+      bands: { value: new Float32Array(16) }, kick: { value: 0 }, level: { value: 0 },
+      c0: { value: new THREE.Color() }, c1: { value: new THREE.Color() }, c2: { value: new THREE.Color() } },
+    vertexShader: FLATV,
+    fragmentShader: `
+      uniform float aspect, yaw, pitch, bank, kick, level; uniform vec3 cam, c0, c1, c2; uniform float bands[16]; varying vec2 vUv;
+      ${RAMP}
+      float H(vec2 p) {
+        p = floor(p / 5.) * 5.;  // blocks, and the heights in steps: terraces
+        float h = sin(p.x * 0.031) * cos(p.y * 0.027) * 22. + sin(p.x * 0.083 + p.y * 0.061) * 9. + cos(p.y * 0.12 - p.x * 0.04) * 4.;
+        return floor((h + bands[int(mod(floor(p.x * 0.02 + p.y * 0.013), 16.))] * 16.) / 3.) * 3.;
+      }
+      void main() {
+        vec2 uv = vUv * 2. - 1.;
+        uv.x *= aspect;
+        uv = mat2(cos(bank), -sin(bank), sin(bank), cos(bank)) * uv;
+        vec3 d = normalize(vec3(uv.x, uv.y + pitch, -1.5));
+        d.xz = mat2(cos(yaw), -sin(yaw), sin(yaw), cos(yaw)) * d.xz;
+        vec3 horizon = mix(c0, vec3(1.), 0.12) * 0.8;
+        vec3 sky = mix(horizon, c2 * 0.35, clamp(d.y * 1.3, 0., 1.));
+        sky += c1 * pow(max(dot(d, normalize(vec3(sin(yaw), 0.12, -cos(yaw)))), 0.), 40.) * 1.2;
+        vec3 col = sky;
+        float t = 1.;
+        for (int i = 0; i < 110; i++) {
+          vec3 p = cam + d * t;
+          float h = H(p.xz);
+          if (p.y < h) {
+            vec3 q = p - d * (0.6 + t * 0.025);  // the step before: hit through a side or the top
+            float side = q.y >= H(q.xz) ? 0.95 : 0.55;
+            vec3 g = mix(c0, c1, clamp(h / 50. + 0.5, 0., 1.)) * side * (0.85 + kick * 0.45);
+            g = mix(g, c2 * 0.5, clamp(-h / 40., 0., 0.7));
+            col = mix(g, horizon, pow(clamp(t / 360., 0., 1.), 1.4));
+            break;
+          }
+          t += 0.6 + t * 0.025;
+          if (t > 360.) break;
+        }
+        gl_FragColor = vec4(col, 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
+  let x = 0, z = 0, heading = 0, ground = 0;
+  return {
+    scene, camera: flat, maxLines: 720,
+    resize(a) { mat.uniforms.aspect.value = a; },
+    update(dt, t) {
+      const u = mat.uniforms;
+      u.bands.value.set(S.bands);
+      u.kick.value = S.kick;
+      u.c0.value.copy(pal(0)); u.c1.value.copy(pal(1)); u.c2.value.copy(pal(2));
+    },
+    shots: [
+      (t) => [26, 0.05, 0.35, Math.sin(t * 0.35) * 0.06, 1],          // cruising
+      (t) => [8, 0.12, 0.6, Math.sin(t * 0.5) * 0.1, 1.7],            // skimming the tops
+      (t) => [70, -0.28, 0.2, 0, 0.7],                                // high above
+      (t) => [20, 0.02, 1.1, Math.sin(t * 0.4) * 0.3, 1.2],           // banking turns
+    ],
+    aim(v) {
+      const dt = 1 / 60, u = mat.uniforms;
+      heading += Math.sin(performance.now() / 1000 * 0.15) * v[2] * dt * 0.6;
+      const yaw = heading + input.dragX + input.x * 0.3, sp = (14 + S.energy * 40) * S.speed * v[4];
+      x += Math.sin(yaw) * sp * dt; z -= Math.cos(yaw) * sp * dt;
+      let g = hills(x, z);
+      for (let k = 1; k <= 3; k++) g = Math.max(g, hills(x + Math.sin(yaw) * k * 6, z - Math.cos(yaw) * k * 6));
+      ground += (g - ground) * 0.08;
+      u.cam.value.set(x, ground + 10 + v[0] + S.bass * 4, z);
+      u.yaw.value = yaw; u.pitch.value = v[1] - input.y * 0.2 + input.dragY * 0.5; u.bank.value = v[3];
+    },
+    click() { S.kick = 1; },
+  };
+}
+
+// MARK: Rotozoom: a tiled pattern turning and zooming, its colours cycling through the palette.
+function makeRoto() {
+  const scene = new THREE.Scene();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 }, aspect: { value: 1.33 }, ang: { value: 0 }, zoom: { value: 1 }, warp: { value: 0 },
+      kick: { value: 0 }, level: { value: 0 }, bands: { value: new Float32Array(16) },
+      c0: { value: new THREE.Color() }, c1: { value: new THREE.Color() }, c2: { value: new THREE.Color() } },
+    vertexShader: FLATV,
+    fragmentShader: `
+      uniform float time, aspect, ang, zoom, warp, kick, level; uniform float bands[16]; uniform vec3 c0, c1, c2; varying vec2 vUv;
+      ${RAMP}
+      void main() {
+        vec2 uv = vUv * 2. - 1.;
+        uv.x *= aspect;
+        uv *= zoom * (1. - kick * 0.12);
+        uv += warp * vec2(sin(uv.y * 3. + time), cos(uv.x * 3. + time * 0.8)) * 0.15;
+        vec2 p = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * uv * 4. + vec2(time * 0.3, time * 0.17);
+        vec2 cell = floor(p), f = fract(p) - 0.5;
+        float check = mod(cell.x + cell.y, 2.);
+        float ring = abs(length(f) - 0.28 - bands[int(mod(cell.x * 3. + cell.y * 7., 16.))] * 0.16);
+        float idx = check + step(ring, 0.06) * 2. + step(abs(f.x) + abs(f.y), 0.12);
+        vec3 col = ramp(idx * 0.21 + time * 0.05 + cell.x * 0.03) * (0.55 + 0.45 * check + level * 0.3);
+        gl_FragColor = vec4(col, 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
+  let ang = 0, spin = 0;
+  return {
+    scene, camera: flat,
+    resize(a) { mat.uniforms.aspect.value = a; },
+    update(dt) {
+      const u = mat.uniforms;
+      u.time.value += dt * (0.5 + S.energy * 1.5) * S.speed;
+      u.bands.value.set(S.bands);
+      u.kick.value = S.kick; u.level.value = S.energy;
+      u.c0.value.copy(pal(0)); u.c1.value.copy(pal(1)); u.c2.value.copy(pal(2));
+      ang += dt * (spin + input.dragX * 0.5) * S.speed;
+    },
+    shots: [() => [0.3, 1, 0.1], () => [-0.8, 0.5, 0], () => [0.1, 2.2, 0.4], () => [1.2, 1.2, 0.2], (t) => [Math.sin(t * 0.3), 0.8 + Math.sin(t * 0.2) * 0.5, 0.6]],
+    aim(v) { spin = v[0]; mat.uniforms.zoom.value = v[1] * (1 - input.y * 0.2); mat.uniforms.warp.value = v[2]; },
+    kick(s) { ang += 0.08 * s; },
+    impact() { ang += 1.2; },
+    click() { ang += 0.5; },
+  };
+}
+
+// MARK: Raster Bars: shaded colour bars swinging past and a four-sided ribbon twisting through
+// the middle, over faint copper lines.
+function makeRaster() {
+  const scene = new THREE.Scene();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 }, aspect: { value: 1.33 }, spread: { value: 0.5 }, twist: { value: 0.5 }, sway: { value: 0 },
+      kick: { value: 0 }, level: { value: 0 }, bands: { value: new Float32Array(16) },
+      c0: { value: new THREE.Color() }, c1: { value: new THREE.Color() }, c2: { value: new THREE.Color() } },
+    vertexShader: FLATV,
+    fragmentShader: `
+      uniform float time, aspect, spread, twist, sway, kick, level; uniform float bands[16]; uniform vec3 c0, c1, c2; varying vec2 vUv;
+      void main() {
+        float y = vUv.y;
+        vec3 col = mix(c2 * 0.06, c2 * 0.22, y) + c0 * 0.05 * step(0.5, fract(y * 48. + time * 0.4));
+        for (int i = 0; i < 8; i++) {
+          float f = float(i);
+          float cy = 0.5 + sin(time * (0.9 + f * 0.13) + f * 0.8) * (0.22 + spread * 0.2 + kick * 0.06);
+          float d = abs(y - cy) / (0.03 + bands[i * 2] * 0.035);
+          if (d < 1.) {
+            vec3 bc = mod(f, 3.) < 1. ? c0 : mod(f, 3.) < 2. ? c1 : c2;
+            col = bc * (1. - d * d) * 1.3 + vec3(pow(1. - d, 10.)) * 0.7;
+          }
+        }
+        float x = (vUv.x - 0.5) * aspect - sin(y * 2. + time * 0.6) * sway;
+        float a = time * 1.1 + sin(y * 3. + time * 0.7) * twist * 3. + bands[2] * 1.5, w = 0.15 + level * 0.05;
+        for (int k = 0; k < 4; k++) {
+          float x1 = sin(a + float(k) * 1.5708) * w, x2 = sin(a + float(k + 1) * 1.5708) * w;
+          if (x2 > x1 && x >= x1 && x <= x2) {
+            vec3 fc = k == 0 ? c0 : k == 1 ? c1 : k == 2 ? c2 : mix(c0, c1, 0.5);
+            col = fc * (0.35 + 0.9 * (x2 - x1) / (w * 1.42)) * (1. + kick * 0.4);
+          }
+        }
+        gl_FragColor = vec4(col, 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
+  return {
+    scene, camera: flat,
+    resize(a) { mat.uniforms.aspect.value = a; },
+    update(dt) {
+      const u = mat.uniforms;
+      u.time.value += dt * (0.7 + S.energy * 1.4) * S.speed;
+      u.bands.value.set(S.bands);
+      u.kick.value = S.kick; u.level.value = S.energy;
+      u.c0.value.copy(pal(0)); u.c1.value.copy(pal(1)); u.c2.value.copy(pal(2));
+    },
+    shots: [() => [0.5, 0.5, 0], () => [1, 0.2, 0.4], () => [0.2, 1, 0.1], (t) => [0.7, 0.6 + Math.sin(t * 0.3) * 0.4, Math.sin(t * 0.2) * 0.6]],
+    aim(v) { const u = mat.uniforms; u.spread.value = v[0]; u.twist.value = v[1]; u.sway.value = v[2] + input.x * 0.3; },
+    click() { S.kick = 1; },
+  };
+}
+
 // MARK: Scenes
 
-const order = ["sea", "towers", "tunnel", "crystal", "field"];
-const names = { sea: "Polygon Sea", towers: "Signal Towers", tunnel: "Tunnel", crystal: "Crystal", field: "Dither Field" };
-const makers = { sea: makeSea, towers: makeTowers, tunnel: makeTunnel, crystal: makeCrystal, field: makeField };
+const order = ["sea", "towers", "tunnel", "crystal", "field", "grid", "voxel", "roto", "raster"];
+const names = { sea: "Polygon Sea", towers: "Signal Towers", tunnel: "Tunnel", crystal: "Crystal", field: "Dither Field",
+  grid: "Light Grid", voxel: "Voxel Hills", roto: "Rotozoom", raster: "Raster Bars" };
+const makers = { sea: makeSea, towers: makeTowers, tunnel: makeTunnel, crystal: makeCrystal, field: makeField,
+  grid: makeGrid, voxel: makeVoxel, roto: makeRoto, raster: makeRaster };
 const built = {};
 let current = "sea", fade = 0, autoAt = 0;
 const scene = () => built[current] || (built[current] = makers[current]());
 function use(key, announce = true) {
   if (!makers[key]) return;
+  const was = current;
   if (key !== current) fade = 0;
   current = key;
   const s = scene();
+  if (key !== was) director.reset(s.shots?.length || 0);
+  if (!settings.res && (s.maxLines || 0) !== (built[was]?.maxLines || 0) && rt) applyRes();
   s.resize?.(low.x / low.y);
   if (s.camera.isPerspectiveCamera) { s.camera.aspect = low.x / low.y; s.camera.updateProjectionMatrix(); }
   if (announce) tag(document.getElementById("name"), names[key], 2500);
@@ -490,7 +931,8 @@ function choose(key) {
 function applyRes() {
   // Native: the screen's own pixels. Otherwise a whole number of them per pixel (1440 lines: 240 at 6, 480 at 3).
   const hd = !settings.res, H = (innerHeight || 3) * (devicePixelRatio || 1), want = settings.res >= 480 ? 480 : 240;
-  const h = hd ? Math.round(H) : Math.round(H / Math.max(1, Math.round(H / want))), w = Math.max(1, Math.round(h * (innerWidth || 4) / (innerHeight || 3)));
+  const cap = built[current]?.maxLines || H;  // a heavy scene's limit, still a whole number of pixels
+  const h = hd ? Math.round(H / Math.ceil(H / cap)) : Math.round(H / Math.max(1, Math.round(H / want))), w = Math.max(1, Math.round(h * (innerWidth || 4) / (innerHeight || 3)));
   low.set(w, h);
   renderer.setSize(innerWidth, innerHeight, false);
   rt?.dispose();
@@ -584,7 +1026,7 @@ addEventListener("pointerup", (e) => {
 addEventListener("wheel", (e) => { input.warp = Math.max(0.25, Math.min(4, input.warp * Math.exp(-e.deltaY * 0.002))); }, { passive: true });
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
-  if (k >= "1" && k <= "5") choose(order[+k - 1]);
+  if (k >= "1" && k <= "9") choose(order[+k - 1]);
   else if (k === "0") choose("auto");
   else if (k === "arrowright") choose(order[(order.indexOf(current) + 1) % order.length]);
   else if (k === "arrowleft") choose(order[(order.indexOf(current) + order.length - 1) % order.length]);
@@ -625,6 +1067,7 @@ function frame(now) {
 
   const s = scene();
   s.update(dt, t);
+  if (s.shots) { const v = director.frame(s.shots, t, dt); s.aim ? s.aim(v) : aim(s.camera, v); }
   renderer.setRenderTarget(rt);
   renderer.render(s.scene, s.camera);
   caption.render();

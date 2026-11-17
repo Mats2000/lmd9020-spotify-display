@@ -114,7 +114,8 @@ struct DisplayPage: View {
 }
 
 extension DisplayPage {
-    static let screenScenes = [("auto", "Auto"), ("sea", "Sea"), ("towers", "Towers"), ("tunnel", "Tunnel"), ("crystal", "Crystal"), ("field", "Dither")]
+    static let screenScenes = [("auto", "Auto"), ("sea", "Sea"), ("towers", "Towers"), ("tunnel", "Tunnel"), ("crystal", "Crystal"),
+                               ("field", "Dither"), ("grid", "Grid"), ("voxel", "Voxel"), ("roto", "Roto"), ("raster", "Raster")]
 
     // The visualizer on this Mac's own screen.
     var screen: some View {
@@ -127,12 +128,12 @@ extension DisplayPage {
                 Chip(title: "Native", chosen: show.screenRes == 0) { show.screenRes = 0 }
                 Chip(title: "Title", chosen: show.screenCaption) { show.screenCaption.toggle() }
             }
-            HStack(spacing: 8) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), alignment: .leading, spacing: 8) {
                 ForEach(Self.screenScenes, id: \.0) { k, name in
                     Chip(title: name, chosen: show.screenScene == k) { show.screenScene = k }
                 }
             }
-            Text("Auto moves to the next scene with each song. On the screen: 1-5 pick a scene, drag to look around, click to hit, scroll for speed, Esc closes.")
+            Text("Auto moves to the next scene with each song; the camera finds its own shots. On the screen: 1-9 pick a scene, drag to look around, click to hit, scroll for speed, Esc closes.")
                 .font(.soraLight(11)).foregroundColor(Sentia.ink2).fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: 512, alignment: .leading)
