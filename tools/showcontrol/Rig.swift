@@ -133,6 +133,10 @@ final class Rig {
     }
 
     func set(_ p: Plan) { queue.async { self.plan = p } }
+    // Asleep (no music, nobody looking): once a second instead of 30 times.
+    func asleep(_ on: Bool) {
+        queue.async { self.timer?.schedule(deadline: .now(), repeating: on ? 1 : 1.0 / 30, leeway: .milliseconds(on ? 200 : 2)) }
+    }
     func setCover(_ colours: [RGB]) { queue.async { self.cover = colours } }
 
     // Where the song is (from Spotify, every second), carried on between reports while it plays.
@@ -452,7 +456,7 @@ final class Rig {
         if plan.lampsOn && (r.playing || quietFor < 10) {
             tiles.frame(kick: 0, level: energy, bands: r.bands)
         }
-        if now.timeIntervalSince(statusAt) > 3 {  // has anyone else taken a lamp?
+        if !driving.isEmpty && now.timeIntervalSince(statusAt) > 3 {  // has anyone else taken a lamp?
             statusAt = now
             govee.checkStatus()
         }

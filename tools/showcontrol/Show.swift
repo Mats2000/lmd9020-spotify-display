@@ -13,7 +13,7 @@ final class Show: ObservableObject {
     enum Page: String, CaseIterable { case live = "Live", lights = "Lights", display = "Display", tiles = "TILES", settings = "Settings" }
 
     @Published var page: Page = Page(rawValue: UserDefaults.standard.string(forKey: "page") ?? "") ?? .live {
-        didSet { UserDefaults.standard.set(page.rawValue, forKey: "page"); wantFrames() }
+        didSet { UserDefaults.standard.set(page.rawValue, forKey: "page"); wantFrames(); previewTimer() }
     }
     @Published var styleName: String { didSet { UserDefaults.standard.set(styleName, forKey: "styleName"); applyStyle() } }
     @Published var schemeName: String { didSet { UserDefaults.standard.set(schemeName, forKey: "schemeName"); applyStyle() } }
@@ -58,8 +58,8 @@ final class Show: ObservableObject {
     @Published var master: Int = UserDefaults.standard.object(forKey: "master") as? Int ?? 100 {
         didSet { UserDefaults.standard.set(master, forKey: "master"); pushPlan(); applyTiles() }
     }
-    @Published var blackout = false { didSet { pushPlan(); applyTiles() } }
-    @Published var flash = false { didSet { pushPlan(); applyTiles(); flashOthers() } }
+    @Published var blackout = false { didSet { wake(); pushPlan(); applyTiles() } }
+    @Published var flash = false { didSet { wake(); pushPlan(); applyTiles(); flashOthers() } }
     private var flashTimer: Timer?
     // The display and TILES go white too, told again every 50 ms while held: each lets go by
     // itself soon after the last (the display in 0.4 s, TILES as its hit fades).
@@ -152,8 +152,47 @@ final class Show: ObservableObject {
     private var heldIDs: Set<String>
     private var frameBuffer = [UInt8](repeating: 0, count: 256 * 240 * 3)
     private let started = Date()
-    var windowVisible = true { didSet { if windowVisible != oldValue { wantFrames() } } }
-    var phoneWatching = Date.distantPast  // the phone page asks for live colours too
+    var windowVisible = true {
+        didSet {
+            guard windowVisible != oldValue else { return }
+            if windowVisible { wake() }
+            wantFrames()
+            previewTimer()
+        }
+    }
+    var phoneWatching = Date.distantPast { didSet { wake() } }  // the phone page asks for live colours too
+
+    // Asleep: three minutes with no music, no window and no phone. The lights tick once a second,
+    // Spotify is asked every 5 s (its own play notice wakes the show at once) and App Nap may slow us.
+    @Published private(set) var asleep = false {
+        didSet {
+            guard asleep != oldValue else { return }
+            rig.asleep(asleep)
+            if asleep, let a = activity {
+                ProcessInfo.processInfo.endActivity(a)
+                activity = nil
+            } else if !asleep && activity == nil {
+                activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                                                                 reason: "Running the show")
+            }
+        }
+    }
+    private var busyAt = Date(), sleptPolls = 0
+    private var activity: NSObjectProtocol?
+    func wake() {
+        busyAt = Date()
+        if asleep {
+            asleep = false
+            update()
+        }
+    }
+    private var drawTimer: Timer?
+    private func previewTimer() {
+        let want = windowVisible && page == .display
+        if want == (drawTimer != nil) { return }
+        drawTimer?.invalidate()
+        drawTimer = want ? Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.drawPreview() } : nil
+    }
 
     private let displayOwn = 0.045
 
@@ -235,9 +274,14 @@ final class Show: ObservableObject {
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         pushPlan()
 
+        // No App Nap while awake: kicks keep their timing with the window closed.
+        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                                                         reason: "Running the show")
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.spotify.client.PlaybackStateChanged"),
+                                                            object: nil, queue: .main) { [weak self] _ in self?.wake() }
         update()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.update() }
-        Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.drawPreview() }
+        previewTimer()
         var scans = 0
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in  // until a lamp answers, then each minute
             guard let self else { return }
@@ -311,7 +355,8 @@ final class Show: ObservableObject {
     private var starting = false
 
     private func update() {
-        watcher.poll()
+        sleptPolls = asleep ? sleptPolls + 1 : 0
+        if sleptPolls % 5 == 0 { watcher.poll() }
         rig.setSong(position: watcher.position, length: watcher.length, playing: watcher.playing)
         if shuffling && Date().timeIntervalSince(shuffledAt) > 60 { shuffle() }
         let wanted = (analyzer.enabled || lampsOn) && (watcher.playing || !watcher.reachable)
@@ -336,8 +381,13 @@ final class Show: ObservableObject {
         speakerMs = Int(Sync.speakerDelay * 1000)
         if tilesName != rig.tiles.name { tilesName = rig.tiles.name }
         openAtLogin = SMAppService.mainApp.status == .enabled
+        let now = Date()
+        if watcher.playing || capture.running || flash || windowVisible || now.timeIntervalSince(phoneWatching) < 60 { busyAt = now }
+        let rest = now.timeIntervalSince(busyAt) > 180
+        if rest != asleep { asleep = rest }
         let r = analyzer.reading
         if needsPermission { status = "Needs permission to record system audio" }
+        else if asleep { status = "Asleep until Spotify plays" }
         else if r.playing { status = "Listening to Spotify" }
         else { status = watcher.paused ? "Spotify is paused" : (watcher.playing ? "Starting…" : "Spotify is quiet") }
     }

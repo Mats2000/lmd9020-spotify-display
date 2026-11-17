@@ -381,9 +381,13 @@ sound is captured; nothing of the screen is used), control of Spotify (to see wh
 playing, and for the song and cover in the preview) and access to devices on the local network.
 It only records while Spotify plays, so the menu bar's recording indicator goes away about ten
 seconds after the music stops (and never shows with the style set to Off). After allowing recording in System
-Settings > Privacy & Security, quit and reopen the app. Closing the window keeps it streaming
-(click its Dock icon to bring it back; Quit stops it and puts the lights back), and "Open at login" starts it with the
-Mac. It finds the display by itself; if your network blocks broadcasts, give it the address:
+Settings > Privacy & Security, quit and reopen the app. It lives in the menu bar (the logo's
+light and beam): its menu shows what it's doing and has Open, Lights, Blackout and Quit (Quit
+stops it and puts the lights back). The Dock icon is there only while the window is open, and
+closing the window keeps the show running. "Open at login" starts it with the Mac, straight to the
+menu bar. After three minutes with no music, no window and no phone looking, it sleeps (the icon
+dims): the lights tick once a second instead of 30 and Spotify is asked every 5 s. Spotify's own
+play notice, a phone, the window, Flash or Blackout wake it at once. It finds the display by itself; if your network blocks broadcasts, give it the address:
 `defaults write com.sentiainstruments.lmd-visualizer host 192.168.1.82`.
 
 It sends 25 bytes 60 times a second over UDP (port 4210; the display announces itself on

@@ -243,6 +243,7 @@ extension Show {
     }
 
     func perform(_ a: [String: Any]) {
+        wake()
         let id = a["id"] as? String ?? ""
         func int(_ k: String, _ r: ClosedRange<Int>) -> Int? { (a[k] as? Int).map { max(r.lowerBound, min(r.upperBound, $0)) } }
         switch a["action"] as? String {
