@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var window: NSWindow!
     private var show: Show!
     private var item: NSStatusItem!
-    private var watching: AnyCancellable?
+    private var watching: AnyCancellable?, screenWatch: AnyCancellable?
     private var web: WebServer?
     private var relay: Relay?
     private var displayLog: DisplayLog?
@@ -59,6 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         barMenu.delegate = self
         item.menu = barMenu
         watching = show.$asleep.sink { [weak self] asleep in self?.item.button?.appearsDisabled = asleep }
+        // The screen visualizer is a window too: the Dock icon while it's up.
+        screenWatch = show.$screenOpen.dropFirst().sink { [weak self] open in
+            guard let self else { return }
+            if open { NSApp.setActivationPolicy(.regular) } else if !self.window.isVisible { NSApp.setActivationPolicy(.accessory) }
+        }
 
         if atLogin {
             show.windowVisible = false
@@ -84,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    func windowWillClose(_ notification: Notification) { NSApp.setActivationPolicy(.accessory) }
+    func windowWillClose(_ notification: Notification) { if !show.screenOpen { NSApp.setActivationPolicy(.accessory) } }
 
     // The app icon's light and beam (make_icon.py) without the tile, as a template for the menu bar.
     private static let barIcon: NSImage = {
@@ -117,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(menu, "Open Show Control", #selector(open))
         add(menu, "Lights", #selector(toggleLights), on: show.lampsOn)
         add(menu, "Blackout", #selector(toggleBlackout), on: show.blackout)
+        add(menu, "Visualizer on screen", #selector(toggleScreen), on: show.screenOpen)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Show Control", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
@@ -127,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc private func toggleLights() { show.lampsOn.toggle() }
     @objc private func toggleBlackout() { show.blackout.toggle() }
+    @objc private func toggleScreen() { show.toggleScreen() }
 }
 
 let app = NSApplication.shared

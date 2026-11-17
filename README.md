@@ -240,6 +240,32 @@ of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** 
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 - **Off:** the card's normal solid background, even with the app running.
 
+### This Mac's screen
+
+Below the preview, **Full screen** opens a visualizer on the Mac's own main display (also in
+the menu bar menu), fed the same music data, kicks and cover colours as the LMD-9020. It's
+`screen/index.html` in a web view, drawn with three.js (0.159, `screen/three.min.js`, MIT) in
+the look of 90s consoles: everything rendered at 240 lines (or 480, softer), a whole number of
+screen pixels per pixel (a 1440-line ultrawide: 6 or 3), vertices snapped to that grid,
+textures mapped without perspective correction so they swim, and the colour dithered to 5 bits
+(6 at 480). Five scenes, all abstract:
+
+- **Polygon Sea:** a flat-shaded sea heaving with the bass, the spectrum rolling across it, a
+  low-poly sun, rings spreading from each kick.
+- **Signal Towers:** the spectrum as a city of blocks, each row a moment further back.
+- **Tunnel:** a twelve-sided tunnel with a swimming checker texture in the cover's colours,
+  rings flying out of the dark on the kicks.
+- **Crystal:** a faceted crystal swelling with the spectrum, shards orbiting it, stars
+  streaming past.
+- **Dither Field:** metaballs and plasma in contour bands through the palette, the waveform
+  drawn across.
+
+**Auto** moves to the next scene with each song (and every 2.5 minutes). On the screen: 1-5
+pick a scene (0 back to Auto, the arrows step), the pointer looks around, a drag steers, a
+click hits (a ripple, rings, a burst, a blob), the wheel sets the speed, space flashes white, P
+switches 240/480, T the song title, H the keys, Esc (or leaving full screen) closes it. Flash
+and Impacts reach it too. While it's open the app doesn't sleep.
+
 ### The Live page
 
 The app opens on **Live**, laid out like a lighting desk, the whole show on one page: what's

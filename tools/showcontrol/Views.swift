@@ -88,6 +88,7 @@ struct DisplayPage: View {
                             Text("Allow Show Control under Privacy & Security → Screen & System Audio Recording.")
                                 .font(.sora(12)).foregroundColor(Sentia.inkLight)
                         }
+                        screen.padding(.top, 22)
                     }
                     VStack(alignment: .leading, spacing: 28) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -113,6 +114,29 @@ struct DisplayPage: View {
 }
 
 extension DisplayPage {
+    static let screenScenes = [("auto", "Auto"), ("sea", "Sea"), ("towers", "Towers"), ("tunnel", "Tunnel"), ("crystal", "Crystal"), ("field", "Dither")]
+
+    // The visualizer on this Mac's own screen.
+    var screen: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel(text: "This Mac's screen")
+            HStack(spacing: 8) {
+                Chip(title: show.screenOpen ? "Close" : "Full screen", chosen: show.screenOpen) { show.toggleScreen() }
+                Chip(title: "240p", chosen: show.screenRes < 480) { show.screenRes = 240 }
+                Chip(title: "480p", chosen: show.screenRes >= 480) { show.screenRes = 480 }
+                Chip(title: "Title", chosen: show.screenCaption) { show.screenCaption.toggle() }
+            }
+            HStack(spacing: 8) {
+                ForEach(Self.screenScenes, id: \.0) { k, name in
+                    Chip(title: name, chosen: show.screenScene == k) { show.screenScene = k }
+                }
+            }
+            Text("Auto moves to the next scene with each song. On the screen: 1-5 pick a scene, drag to look around, click to hit, scroll for speed, Esc closes.")
+                .font(.soraLight(11)).foregroundColor(Sentia.ink2).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: 512, alignment: .leading)
+    }
+
     // The display announces itself every 2 s; not hearing it means it's off or off the network, or
     // macOS is keeping the app off the network.
     var displayLine: String {

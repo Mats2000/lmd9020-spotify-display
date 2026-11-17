@@ -1,0 +1,628 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Show Control Screen</title>
+<!-- The visualizer on the Mac's own screen (Screen.swift feeds it). Drawn at 240 or 448 lines,
+     vertices snapped to the pixel grid, textures mapped affine, colour dithered to 5 or 6 bits. -->
+<style>
+@font-face { font-family: "Exo 2"; src: url("../Fonts/Exo2.0-SemiBold.otf"); }
+@font-face { font-family: "Sora"; src: url("../Fonts/Sora-Light.ttf"); font-weight: 300; }
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+body.idle { cursor: none; }
+.tag { position: fixed; left: 28px; color: rgba(255, 255, 255, 0.72); pointer-events: none; transition: opacity 0.8s; }
+#name { top: 22px; font: 600 15px "Exo 2", sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
+#help { bottom: 22px; font: 300 12.5px "Sora", sans-serif; }
+</style>
+</head>
+<body>
+<div class="tag" id="name"></div>
+<div class="tag" id="help">1–5 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p · T title · H help · Esc close</div>
+<script src="three.min.js"></script>
+<script>
+"use strict";
+THREE.ColorManagement.enabled = false;
+const post = (m) => { try { window.webkit.messageHandlers.screen.postMessage(m); } catch (e) {} };
+const WHITE = new THREE.Color(1, 1, 1);
+const rand = (a, b) => a + Math.random() * (b - a);
+
+// The music, as Show Control hears it (already held back to land with the speakers).
+const S = { level: 0, energy: 0, target: new Float32Array(16), bands: new Float32Array(16), wave: new Float32Array(64),
+  bass: 0, mid: 0, high: 0, kick: 0, impact: 0, held: false, key: false, speed: 1 };
+let palette = [], paletteVersion = 0;
+const pal = (i) => palette[((i % palette.length) + palette.length) % palette.length];
+function setPalette(cs) {
+  palette = cs.slice(0, 5).map(([r, g, b]) => new THREE.Color(r / 255, g / 255, b / 255));
+  const fill = [[255, 0, 255], [148, 171, 249], [106, 34, 192]];
+  while (palette.length < 3) palette.push(new THREE.Color(...fill[palette.length].map((v) => v / 255)));
+  paletteVersion++;
+}
+setPalette([]);
+
+window.feed = (level, beat, bands, wave) => {
+  S.level = level / 255;
+  for (let i = 0; i < 16; i++) S.target[i] = (bands[i] || 0) / 255;
+  for (let i = 0; i < 64; i++) S.wave[i] = (wave[i] || 0) / 128;
+};
+window.kick = (s) => { S.kick = Math.max(S.kick, 0.55 + 0.45 * s); scene().kick?.(s); };
+window.accent = (s) => scene().accent?.(s);
+window.impact = () => { S.impact = 1; scene().impact?.(); };
+window.flash = (on) => { S.held = on; };
+window.song = (title, artist, colours) => {
+  if (colours && colours.length) setPalette(colours);
+  caption.show(title, artist);
+  if (settings.scene === "auto" && title) { autoAt = 0; step(1); }
+};
+const settings = { scene: "auto", res: 240, caption: true };
+window.settings = (s) => {
+  const res = settings.res;
+  Object.assign(settings, s);
+  if (settings.res !== res) applyRes();
+  if (settings.scene !== "auto") use(settings.scene);
+  if (!settings.caption) caption.hide();
+};
+
+// Low-res target, then a pass up to the screen: nearest pixels, ordered dither, PS2 softness.
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.setPixelRatio(devicePixelRatio || 1);
+document.body.appendChild(renderer.domElement);
+const low = new THREE.Vector2(320, 240);
+let rt = null;
+
+const postMat = new THREE.ShaderMaterial({
+  uniforms: { t: { value: null }, res: { value: low }, flash: { value: 0 }, fade: { value: 0 }, levels: { value: 31 }, soft: { value: 0 } },
+  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
+  fragmentShader: `
+    uniform sampler2D t; uniform vec2 res; uniform float flash, fade, levels, soft; varying vec2 vUv;
+    float b2(vec2 a) { a = floor(a); return fract(dot(a, vec2(0.5, a.y * 0.75))); }
+    float b4(vec2 a) { return b2(0.5 * a) * 0.25 + b2(a); }
+    vec3 at(vec2 p) { return texture2D(t, (p + 0.5) / res).rgb; }
+    void main() {
+      vec2 p = floor(vUv * res);
+      vec3 c = at(p);
+      if (soft > 0.5) {
+        vec3 n = at(p + vec2(1., 0.)) + at(p - vec2(1., 0.)) + at(p + vec2(0., 1.)) + at(p - vec2(0., 1.));
+        c = c * 0.7 + n * 0.075 + max(n * 0.25 - 0.55, 0.) * 0.5;
+        c *= 0.94 + 0.06 * mod(p.y, 2.);
+      }
+      c = mix(c * fade, vec3(1.), flash);
+      c = floor(c * levels + b4(p)) / levels;
+      gl_FragColor = vec4(c, 1.);
+    }`,
+  depthTest: false, depthWrite: false,
+});
+const postScene = new THREE.Scene(), flat = new THREE.Camera();
+const postQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat);
+postQuad.frustumCulled = false;
+postScene.add(postQuad);
+
+// The PS1 material: vertices snapped to the low-res grid, affine texture mapping (uv times w,
+// divided back per pixel), one light, fog.
+const shared = { snap: { value: new THREE.Vector2(160, 120) }, fogColor: { value: new THREE.Color() },
+  fogNear: { value: 20 }, fogFar: { value: 80 } };
+const VERT = `
+  uniform vec2 snap; uniform float fogNear, fogFar;
+  varying vec2 vUvW; varying float vW, vFog, vLight; varying vec3 vCol;
+  void main() {
+    vec4 local = vec4(position, 1.);
+    vec3 nn = normal;
+    #ifdef USE_INSTANCING
+    local = instanceMatrix * local;
+    nn = mat3(instanceMatrix) * nn;
+    #endif
+    vec4 mv = modelViewMatrix * local;
+    vec4 p = projectionMatrix * mv;
+    p.xy = floor(p.xy / p.w * snap + 0.5) / snap * p.w;
+    gl_Position = p;
+    vUvW = uv * p.w; vW = p.w;
+    vFog = clamp((-mv.z - fogNear) / (fogFar - fogNear), 0., 1.);
+    vLight = 0.3 + 0.7 * max(dot(normalize(normalMatrix * nn), normalize(vec3(0.4, 0.9, 0.6))), 0.);
+    vCol = vec3(1.);
+    #ifdef USE_COLOR
+    vCol = color;
+    #endif
+    #ifdef USE_INSTANCING_COLOR
+    vCol *= instanceColor;
+    #endif
+  }`;
+const FRAG = `
+  uniform vec3 tint, fogColor; uniform sampler2D map; uniform float useMap, glow, opacity, fogMix; uniform vec2 repeat, offset;
+  varying vec2 vUvW; varying float vW, vFog, vLight; varying vec3 vCol;
+  void main() {
+    vec3 c = tint * vCol;
+    if (useMap > 0.5) c *= texture2D(map, vUvW / vW * repeat + offset).rgb;
+    c *= mix(vLight, 1., glow);
+    c = mix(c, fogColor, vFog * fogMix);
+    gl_FragColor = vec4(c, opacity);
+  }`;
+function psx(o = {}) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...shared, tint: { value: (o.tint || WHITE).clone() }, map: { value: o.map || null }, useMap: { value: o.map ? 1 : 0 },
+      repeat: { value: o.repeat || new THREE.Vector2(1, 1) }, offset: { value: new THREE.Vector2() },
+      glow: { value: o.glow ?? 0 }, opacity: { value: o.opacity ?? 1 }, fogMix: { value: o.fog ?? 1 } },
+    vertexShader: VERT, fragmentShader: FRAG, wireframe: !!o.wire, vertexColors: !!o.colors, side: o.side ?? THREE.FrontSide,
+    transparent: !!o.add || (o.opacity ?? 1) < 1, blending: o.add ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: !o.add,
+    polygonOffset: !!o.under, polygonOffsetFactor: 2, polygonOffsetUnits: 2,  // under: lines drawn over it stay whole
+  });
+}
+const tint = (mesh) => mesh.material.uniforms.tint.value;
+
+// The pointer: where it is (smoothed), how far it has dragged, the wheel's warp.
+const input = { x: 0, y: 0, tx: 0, ty: 0, dragX: 0, dragY: 0, warp: 1 };
+function look(camera, at, swing = 1) {
+  camera.lookAt(at.x + input.x * 10 * swing, at.y - input.y * 6 * swing, at.z);
+}
+
+// MARK: Polygon Sea: a flat-shaded sea heaving with the bass, the spectrum rolling across it,
+// rings spreading from kicks and clicks.
+function makeSea() {
+  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(62, 1, 0.1, 300);
+  const size = 110, wide = 240, base = new THREE.PlaneGeometry(wide, size, 72, 40);  // wide enough for 21:9
+  base.rotateX(-Math.PI / 2);
+  const geo = base.toNonIndexed(), pos = geo.attributes.position, rest = pos.array.slice();
+  const land = new THREE.Mesh(geo, psx({ under: true })), wire = new THREE.Mesh(geo, psx({ wire: true, glow: 1, add: true, opacity: 0.75 }));
+  const sun = new THREE.Mesh(new THREE.IcosahedronGeometry(9, 0), psx({ glow: 1, fog: 0 }));
+  sun.position.set(0, 16, -90);
+  scene.add(land, wire, sun);
+  scene.background = shared.fogColor.value;
+  const ripples = [], plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), ray = new THREE.Raycaster(), hit = new THREE.Vector3();
+  let travel = 0;
+  const ripple = (x, z, amp) => { ripples.push({ x, z, age: 0, amp }); if (ripples.length > 10) ripples.shift(); };
+  return {
+    scene, camera,
+    update(dt, t) {
+      travel += dt * (2 + S.energy * 7) * S.speed;
+      for (const r of ripples) r.age += dt;
+      while (ripples.length && ripples[0].age > 5) ripples.shift();
+      const a = pos.array, amp = 0.35 + S.bass * 1.8;
+      for (let i = 0; i < a.length; i += 3) {
+        const x = rest[i], z = rest[i + 2], zt = z - travel;
+        let h = (Math.sin(x * 0.21 + t * 0.9) * 0.7 + Math.cos(zt * 0.17 + t * 0.6) * 0.9 + Math.sin((x + zt) * 0.1) * 0.9) * amp;
+        h += S.bands[Math.max(0, Math.min(15, Math.floor((x / 120 + 0.5) * 16)))] * 3.2 * (z / size + 0.5);
+        for (const r of ripples) {
+          const d = Math.hypot(x - r.x, z - r.z) - r.age * 16;
+          h += r.amp * Math.exp(-r.age * 0.8) * Math.exp(-d * d * 0.03) * Math.cos(d * 0.7);
+        }
+        a[i + 1] = h;
+      }
+      pos.needsUpdate = true;
+      geo.computeVertexNormals();
+      tint(land).copy(pal(0)).multiplyScalar(0.7 + S.kick * 0.4);
+      tint(wire).copy(pal(1)).lerp(WHITE, S.kick * 0.5);
+      tint(sun).copy(pal(0)).lerp(WHITE, 0.25 + S.level * 0.35);
+      sun.scale.setScalar(1 + S.kick * 0.3 + S.bass * 0.4);
+      sun.rotation.y += dt * 0.25;
+      sun.rotation.x += dt * 0.15;
+      shared.fogColor.value.copy(pal(2)).multiplyScalar(0.1);
+      shared.fogNear.value = 18; shared.fogFar.value = 85;
+      camera.position.set(Math.sin(t * 0.07) * 6 + input.dragX * 20, 11 + input.dragY * 10, 44);
+      look(camera, { x: 0, y: 2, z: -20 });
+    },
+    kick(s) { ripple(rand(-70, 70), rand(-35, 25), 1.2 + s); },
+    impact() { ripple(0, 10, 7); },
+    click(nx, ny) {
+      ray.setFromCamera({ x: nx, y: ny }, camera);
+      if (ray.ray.intersectPlane(plane, hit)) ripple(hit.x, hit.z, 5);
+    },
+  };
+}
+
+// MARK: Signal Towers: the spectrum as a city of blocks, each row a moment further back.
+function makeTowers() {
+  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(58, 1, 0.1, 300);
+  const cols = 16, rows = 30, gap = 1.7;
+  const box = new THREE.BoxGeometry(1.15, 1, 1.15).toNonIndexed();
+  box.translate(0, 0.5, 0);
+  const mesh = new THREE.InstancedMesh(box, psx(), cols * rows);
+  const c = new THREE.Color(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), k = new THREE.Vector3();
+  for (let i = 0; i < cols * rows; i++) mesh.setColorAt(i, c.set(1, 1, 1));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(cols * gap + 20, rows * gap + 20, cols + 10, rows + 10).rotateX(-Math.PI / 2),
+    psx({ wire: true, glow: 1, add: true, opacity: 0.35 }));
+  floor.position.set(0, -0.02, -rows * gap / 2 + gap);
+  scene.add(mesh, floor);
+  scene.background = shared.fogColor.value;
+  const hist = Array.from({ length: rows }, () => new Float32Array(cols));
+  let shift = 0, spin = 0.5, boost = 0;
+  return {
+    scene, camera,
+    update(dt, t) {
+      shift += dt;
+      if (shift > 1 / 12) { shift = 0; hist.pop(); hist.unshift(new Float32Array(cols)); }
+      hist[0].set(S.bands);
+      boost *= Math.exp(-dt * 2.5);
+      for (let r = 0; r < rows; r++) for (let i = 0; i < cols; i++) {
+        const n = r * cols + i, h = 0.12 + hist[r][i] * 10 + boost * (6 + Math.sin(i * 0.9 + r * 0.6) * 4) * Math.max(0, 1 - r / 12);
+        m.compose(v.set((i - cols / 2 + 0.5) * gap, 0, -r * gap), q, k.set(1, h, 1));
+        mesh.setMatrixAt(n, m);
+        const u = i / (cols - 1) * 2;
+        c.copy(pal(Math.floor(u))).lerp(pal(Math.floor(u) + 1), u % 1);
+        if (r === 0) c.lerp(WHITE, S.kick * 0.7);
+        mesh.setColorAt(n, c);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.instanceColor.needsUpdate = true;
+      tint(floor).copy(pal(1)).multiplyScalar(0.5 + S.kick * 0.5);
+      spin += dt * (0.06 + S.energy * 0.14) * S.speed;
+      const a = spin + input.dragX * 3, centre = { x: 0, y: 2, z: -16 };
+      camera.position.set(Math.sin(a) * 30, 13 + input.dragY * 14 + S.bass * 3, centre.z + Math.cos(a) * 30);
+      look(camera, centre, 0.6);
+      shared.fogColor.value.copy(pal(2)).multiplyScalar(0.07);
+      shared.fogNear.value = 25; shared.fogFar.value = 75;
+    },
+    impact() { boost = 1.4; },
+    click() { boost = 1; },
+  };
+}
+
+// MARK: Tunnel: a twelve-sided tunnel with a swimming checker texture, rings flying out of the
+// dark on the kicks.
+function makeTunnel() {
+  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(78, 1, 0.1, 300);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.generateMipmaps = false;
+  let painted = -1;
+  function paint() {
+    const g = canvas.getContext("2d"), img = g.createImageData(64, 64), a = pal(0), b = pal(1).clone().multiplyScalar(0.3), s = pal(2);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+      let col = ((x >> 3) + (y >> 3)) % 2 ? a : b;
+      if ((x + y) % 16 < 2) col = s;
+      const d = ((x * 7 + y * 13) % 5) / 40, o = (y * 64 + x) * 4;
+      img.data[o] = Math.min(255, (col.r + d) * 255); img.data[o + 1] = Math.min(255, (col.g + d) * 255);
+      img.data[o + 2] = Math.min(255, (col.b + d) * 255); img.data[o + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    tex.needsUpdate = true;
+    painted = paletteVersion;
+  }
+  const tubeGeo = new THREE.CylinderGeometry(6, 6, 220, 12, 44, true);
+  tubeGeo.rotateX(Math.PI / 2);
+  const tube = new THREE.Mesh(tubeGeo, psx({ map: tex, repeat: new THREE.Vector2(3, 26), side: THREE.BackSide }));
+  scene.add(tube);
+  scene.background = shared.fogColor.value;
+  const ringGeo = new THREE.TorusGeometry(4.6, 0.28, 4, 12), rings = [];
+  for (let i = 0; i < 18; i++) {
+    const r = new THREE.Mesh(ringGeo, psx({ glow: 1, add: true }));
+    r.visible = false;
+    rings.push(r);
+    scene.add(r);
+  }
+  let n = 0, speed = 1;
+  const spawn = (z = -95) => { const r = rings[n++ % rings.length]; r.visible = true; r.position.set(0, 0, z); r.userData.c = n; };
+  return {
+    scene, camera,
+    update(dt, t) {
+      if (painted !== paletteVersion) paint();
+      speed = (1.4 + S.energy * 5 + S.kick * 2.5) * S.speed;
+      const u = tube.material.uniforms;
+      u.offset.value.y += dt * speed * 0.12;
+      u.offset.value.x += dt * (0.015 + S.mid * 0.08);
+      tint(tube).setScalar(0.55 + S.level * 0.5 + S.kick * 0.3);
+      tube.rotation.z = Math.sin(t * 0.21) * 0.6;
+      for (const r of rings) {
+        if (!r.visible) continue;
+        r.position.z += dt * speed * 14;
+        r.rotation.z += dt * 0.8;
+        tint(r).copy(pal(r.userData.c)).lerp(WHITE, S.kick * 0.4);
+        if (r.position.z > 4) r.visible = false;
+      }
+      camera.position.set(Math.sin(t * 0.5) * 1.6 * (0.4 + S.bass), Math.cos(t * 0.37) * 1.2, 0);
+      camera.rotation.set(-input.y * 0.35 + input.dragY, -input.x * 0.45 + input.dragX, Math.sin(t * 0.17) * 0.25);
+      shared.fogColor.value.set(0, 0, 0);
+      shared.fogNear.value = 6; shared.fogFar.value = 78;
+    },
+    kick() { spawn(); },
+    impact() { for (let i = 0; i < 5; i++) spawn(-95 + i * 14); },
+    click() { for (let i = 0; i < 3; i++) spawn(-60 + i * 9); },
+  };
+}
+
+// MARK: Crystal: a faceted crystal swelling with the spectrum, shards orbiting it that scatter on
+// a click or an impact, stars streaming past.
+function makeCrystal() {
+  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(55, 1, 0.1, 400);
+  const geo = new THREE.IcosahedronGeometry(5, 1), pos = geo.attributes.position, rest = pos.array.slice();
+  const band = new Uint8Array(pos.count);
+  for (let i = 0; i < pos.count; i++) band[i] = Math.min(15, Math.floor((Math.atan2(rest[i * 3 + 2], rest[i * 3]) / (2 * Math.PI) + 0.5) * 16));
+  geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3));
+  const gem = new THREE.Mesh(geo, psx({ colors: true }));
+  const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(8, 0), psx({ wire: true, glow: 1, add: true, opacity: 0.6 }));
+  const shardCount = 90, shards = new THREE.InstancedMesh(new THREE.TetrahedronGeometry(0.7, 0), psx(), shardCount);
+  const orbit = Array.from({ length: shardCount }, () => ({ r: rand(10, 17), a: rand(0, 6.3), tilt: rand(-0.6, 0.6), spd: rand(0.15, 0.5), spin: rand(1, 3) }));
+  const starGeo = new THREE.BufferGeometry(), stars = new Float32Array(700 * 3);
+  for (let i = 0; i < 700; i++) { stars[i * 3] = rand(-90, 90); stars[i * 3 + 1] = rand(-60, 60); stars[i * 3 + 2] = rand(-200, 40); }
+  starGeo.setAttribute("position", new THREE.BufferAttribute(stars, 3));
+  const starMat = new THREE.PointsMaterial({ size: 2, sizeAttenuation: false });
+  scene.add(gem, shell, shards, new THREE.Points(starGeo, starMat));
+  scene.background = shared.fogColor.value;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+  let burst = 0, coloured = -1;
+  return {
+    scene, camera,
+    update(dt, t) {
+      if (coloured !== paletteVersion) {
+        const col = geo.attributes.color;
+        for (let f = 0; f < pos.count / 3; f++) {
+          const c = pal(f % 3).clone().lerp(pal(f % 3 + 1), (f * 0.37) % 1);
+          for (let j = 0; j < 3; j++) col.setXYZ(f * 3 + j, c.r, c.g, c.b);
+        }
+        col.needsUpdate = true;
+        coloured = paletteVersion;
+      }
+      const a = pos.array;
+      for (let i = 0; i < pos.count; i++) {
+        const s = 1 + S.bands[band[i]] * 0.55 + S.kick * 0.12;
+        a[i * 3] = rest[i * 3] * s; a[i * 3 + 1] = rest[i * 3 + 1] * s; a[i * 3 + 2] = rest[i * 3 + 2] * s;
+      }
+      pos.needsUpdate = true;
+      geo.computeVertexNormals();
+      gem.rotation.y += dt * (0.2 + S.energy * 0.7) * S.speed;
+      gem.rotation.x = Math.sin(t * 0.3) * 0.4 + input.dragY;
+      shell.rotation.y -= dt * 0.15;
+      shell.rotation.z += dt * 0.1;
+      tint(shell).copy(pal(1)).multiplyScalar(0.5 + S.kick * 0.6);
+      burst *= Math.exp(-dt * 1.3);
+      for (let i = 0; i < shardCount; i++) {
+        const o = orbit[i], ang = o.a + t * o.spd * S.speed + input.dragX, r = o.r + burst * 16 + S.bass * 2.5;
+        v.set(Math.cos(ang) * r, Math.sin(ang * 2 + i) * 2 + o.tilt * r, Math.sin(ang) * r);
+        q.setFromEuler(e.set(t * o.spin, t * o.spin * 0.7, 0));
+        shards.setMatrixAt(i, m.compose(v, q, one));
+      }
+      shards.instanceMatrix.needsUpdate = true;
+      tint(shards).copy(pal(2)).lerp(WHITE, 0.3 + S.kick * 0.4);
+      const sp = stars, go = dt * (8 + S.energy * 40) * S.speed;
+      for (let i = 2; i < sp.length; i += 3) { sp[i] += go; if (sp[i] > 40) sp[i] -= 240; }
+      starGeo.attributes.position.needsUpdate = true;
+      starMat.color.copy(pal(1)).lerp(WHITE, 0.6);
+      camera.position.set(input.x * 7, -input.y * 5, 34 - S.bass * 3);
+      camera.lookAt(0, 0, 0);
+      shared.fogColor.value.copy(pal(2)).multiplyScalar(0.05);
+      shared.fogNear.value = 60; shared.fogFar.value = 200;
+    },
+    impact() { burst = 1.6; },
+    click() { burst = 1; },
+  };
+}
+
+// MARK: Dither Field: metaballs and plasma in contour bands through the palette, the waveform
+// drawn across; a click drops a blob where it lands.
+function makeField() {
+  const scene = new THREE.Scene();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 }, aspect: { value: 1.33 }, bands: { value: new Float32Array(16) }, wave: { value: new Float32Array(64) },
+      level: { value: 0 }, kick: { value: 0 }, c0: { value: new THREE.Color() }, c1: { value: new THREE.Color() }, c2: { value: new THREE.Color() },
+      blobs: { value: Array.from({ length: 6 }, () => new THREE.Vector3(0, 0, 99)) } },
+    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
+    fragmentShader: `
+      uniform float time, aspect, level, kick; uniform float bands[16]; uniform float wave[64];
+      uniform vec3 c0, c1, c2; uniform vec3 blobs[6]; varying vec2 vUv;
+      vec3 ramp(float s) {
+        s = fract(s) * 4.;
+        if (s < 1.) return mix(c2 * 0.15, c0, s);
+        if (s < 2.) return mix(c0, c1, s - 1.);
+        if (s < 3.) return mix(c1, c2, s - 2.);
+        return mix(c2, c2 * 0.15, s - 3.);
+      }
+      void main() {
+        vec2 uv = vUv * 2. - 1.;
+        uv.x *= aspect;
+        uv *= 1. - kick * 0.08;
+        float v = 0.;
+        for (int i = 0; i < 5; i++) {
+          float f = float(i);
+          vec2 c = vec2(sin(time * (0.3 + f * 0.07) + f * 1.7) * aspect * 0.75, cos(time * (0.25 + f * 0.05) + f * 2.3) * 0.7);
+          float r = 0.16 + bands[i * 3] * 0.4;
+          v += r * r / max(dot(uv - c, uv - c), 0.0004);
+        }
+        for (int i = 0; i < 6; i++) {
+          float age = blobs[i].z;
+          if (age < 4.) { vec2 d = uv - blobs[i].xy; float r = 0.5 * exp(-age * 0.6); v += r * r / max(dot(d, d), 0.0004); }
+        }
+        v += 0.3 * sin(uv.x * 3. + time) * cos(uv.y * 2.6 - time * 0.7);
+        vec3 col = ramp(min(v, 3.2) * 0.45 + time * 0.04) * (v > 1. ? 1. : 0.25 + 0.6 * v);
+        int k = int(clamp(vUv.x * 63., 0., 63.));
+        float w = wave[k] * (0.35 + level * 0.5);
+        col += c1 * smoothstep(0.035, 0., abs(vUv.y * 2. - 1. - w)) * 1.3;
+        gl_FragColor = vec4(col * (1. + kick * 0.35), 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
+  let n = 0;
+  return {
+    scene, camera: flat,
+    resize(aspect) { mat.uniforms.aspect.value = aspect; },
+    update(dt, t) {
+      const u = mat.uniforms;
+      u.time.value += dt * (0.6 + S.energy * 1.6) * S.speed;
+      u.bands.value.set(S.bands);
+      u.wave.value.set(S.wave);
+      u.level.value = S.energy;
+      u.kick.value = S.kick;
+      u.c0.value.copy(pal(0)); u.c1.value.copy(pal(1)); u.c2.value.copy(pal(2));
+      for (const b of u.blobs.value) b.z += dt;
+    },
+    click(nx, ny) { mat.uniforms.blobs.value[n++ % 6].set(nx * mat.uniforms.aspect.value, ny, 0); },
+    impact() { mat.uniforms.blobs.value[n++ % 6].set(0, 0, 0); },
+  };
+}
+
+// MARK: Scenes
+
+const order = ["sea", "towers", "tunnel", "crystal", "field"];
+const names = { sea: "Polygon Sea", towers: "Signal Towers", tunnel: "Tunnel", crystal: "Crystal", field: "Dither Field" };
+const makers = { sea: makeSea, towers: makeTowers, tunnel: makeTunnel, crystal: makeCrystal, field: makeField };
+const built = {};
+let current = "sea", fade = 0, autoAt = 0;
+const scene = () => built[current] || (built[current] = makers[current]());
+function use(key, announce = true) {
+  if (!makers[key]) return;
+  if (key !== current) fade = 0;
+  current = key;
+  const s = scene();
+  s.resize?.(low.x / low.y);
+  if (s.camera.isPerspectiveCamera) { s.camera.aspect = low.x / low.y; s.camera.updateProjectionMatrix(); }
+  if (announce) tag(document.getElementById("name"), names[key], 2500);
+}
+function step(d) { use(order[(order.indexOf(current) + d + order.length) % order.length]); }
+function choose(key) {
+  settings.scene = key;
+  post({ scene: key });
+  if (key === "auto") tag(document.getElementById("name"), "Auto", 2500); else use(key);
+}
+
+function applyRes() {
+  // A whole number of screen pixels per low-res pixel (1440 lines: 240 at 6, 480 at 3).
+  const H = (innerHeight || 3) * (devicePixelRatio || 1), want = settings.res >= 480 ? 480 : 240;
+  const h = Math.round(H / Math.max(1, Math.round(H / want))), w = Math.max(1, Math.round(h * (innerWidth || 4) / (innerHeight || 3)));
+  low.set(w, h);
+  renderer.setSize(innerWidth, innerHeight, false);
+  rt?.dispose();
+  rt = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  postMat.uniforms.levels.value = h > 300 ? 63 : 31;
+  postMat.uniforms.soft.value = h > 300 ? 1 : 0;
+  if (h > 300) shared.snap.value.set(w * 4, h * 4); else shared.snap.value.set(w / 2, h / 2);
+  caption.resize();
+  use(current, false);
+}
+addEventListener("resize", applyRes);
+
+// The song's title, low-res in Exo 2, for a few seconds after it changes.
+const caption = (() => {
+  const canvas = document.createElement("canvas"), tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  const capScene = new THREE.Scene(), cam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+  capScene.add(mesh);
+  let until = 0, text = ["", ""];
+  function draw() {
+    const s = Math.max(9, Math.round(low.y / 15)), g = canvas.getContext("2d");
+    canvas.width = Math.round(low.x * 0.8); canvas.height = Math.round(s * 2.6);
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.textBaseline = "top";
+    g.font = `600 ${s}px "Exo 2", sans-serif`;
+    g.fillStyle = "#000"; g.fillText(text[0], 1, 1);
+    g.fillStyle = "#fff"; g.fillText(text[0], 0, 0);
+    g.font = `300 ${Math.round(s * 0.7)}px "Sora", sans-serif`;
+    g.fillStyle = "rgba(255,255,255,0.75)"; g.fillText(text[1], 0, Math.round(s * 1.35));
+    tex.needsUpdate = true;
+    const m = Math.round(low.y / 20);
+    mesh.scale.set(canvas.width, canvas.height, 1);
+    mesh.position.set(m + canvas.width / 2, m + canvas.height / 2, 0);
+    cam.right = low.x; cam.top = low.y; cam.updateProjectionMatrix();
+  }
+  return {
+    show(title, artist) {
+      text = [title || "", artist || ""];
+      until = performance.now() + 7000;
+      document.fonts.load('600 12px "Exo 2"').catch(() => {}).then(draw);
+    },
+    hide() { until = 0; },
+    resize() { if (text[0]) draw(); },
+    render() {
+      const left = until - performance.now();
+      if (!settings.caption || left <= 0 || !text[0]) return;
+      mat.opacity = Math.min(1, left / 800, (7000 - left) / 500);
+      renderer.autoClear = false;
+      renderer.render(capScene, cam);
+      renderer.autoClear = true;
+    },
+  };
+})();
+
+// MARK: Input
+
+function tag(el, text, ms) {
+  if (text) el.textContent = text;
+  el.style.opacity = 1;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => (el.style.opacity = 0), ms);
+}
+let idle;
+function awake() {
+  document.body.classList.remove("idle");
+  clearTimeout(idle);
+  idle = setTimeout(() => document.body.classList.add("idle"), 2500);
+}
+let down = null;
+addEventListener("pointermove", (e) => {
+  input.tx = e.clientX / innerWidth * 2 - 1;
+  input.ty = e.clientY / innerHeight * 2 - 1;
+  if (down) { input.dragX += e.movementX * 0.004; input.dragY = Math.max(-0.8, Math.min(0.8, input.dragY + e.movementY * 0.003)); down.moved += Math.abs(e.movementX) + Math.abs(e.movementY); }
+  awake();
+});
+addEventListener("pointerdown", (e) => { down = { moved: 0 }; });
+addEventListener("pointerup", (e) => {
+  if (down && down.moved < 8) {
+    S.kick = Math.max(S.kick, 0.8);
+    scene().click?.(e.clientX / innerWidth * 2 - 1, 1 - e.clientY / innerHeight * 2);
+  }
+  down = null;
+});
+addEventListener("wheel", (e) => { input.warp = Math.max(0.25, Math.min(4, input.warp * Math.exp(-e.deltaY * 0.002))); }, { passive: true });
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (k >= "1" && k <= "5") choose(order[+k - 1]);
+  else if (k === "0") choose("auto");
+  else if (k === "arrowright") choose(order[(order.indexOf(current) + 1) % order.length]);
+  else if (k === "arrowleft") choose(order[(order.indexOf(current) + order.length - 1) % order.length]);
+  else if (k === " ") S.key = true;
+  else if (k === "p") { settings.res = settings.res >= 480 ? 240 : 480; applyRes(); post({ res: settings.res }); tag(document.getElementById("name"), settings.res >= 480 ? "480p" : "240p", 1500); }
+  else if (k === "t") { settings.caption = !settings.caption; post({ caption: settings.caption }); }
+  else if (k === "h") tag(document.getElementById("help"), null, 6000);
+  else if (k === "escape") post({ close: true });
+  else return;
+  e.preventDefault();
+});
+addEventListener("keyup", (e) => { if (e.key === " ") S.key = false; });
+
+// MARK: Frame
+
+let last = performance.now(), t = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  t += dt;
+  for (let i = 0; i < 16; i++) { const g = S.target[i]; S.bands[i] += (g - S.bands[i]) * Math.min(1, dt * (g > S.bands[i] ? 30 : 7)); }
+  const avg = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += S.bands[i]; return s / (b - a); };
+  S.bass = avg(0, 4); S.mid = avg(4, 10); S.high = avg(10, 16);
+  S.energy += (S.level - S.energy) * Math.min(1, dt * 4);
+  S.kick *= Math.exp(-dt * 7);
+  S.impact *= Math.exp(-dt * 3);
+  S.speed += (input.warp - S.speed) * Math.min(1, dt * 3);
+  input.x += (input.tx - input.x) * Math.min(1, dt * 3);
+  input.y += (input.ty - input.y) * Math.min(1, dt * 3);
+  if (settings.scene === "auto" && (autoAt += dt) > 150) { autoAt = 0; step(1); }
+  fade = Math.min(1, fade + dt * 1.6);
+
+  const s = scene();
+  s.update(dt, t);
+  renderer.setRenderTarget(rt);
+  renderer.render(s.scene, s.camera);
+  caption.render();
+  renderer.setRenderTarget(null);
+  postMat.uniforms.t.value = rt.texture;
+  postMat.uniforms.fade.value = fade;
+  postMat.uniforms.flash.value = S.held || S.key ? 1 : S.impact * 0.7;
+  renderer.render(postScene, flat);
+}
+
+applyRes();
+use(current, false);
+tag(document.getElementById("help"), null, 7000);
+awake();
+requestAnimationFrame(frame);
+post({ ready: true });
+</script>
+</body>
+</html>

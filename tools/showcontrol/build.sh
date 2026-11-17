@@ -11,7 +11,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Fonts" "$OBJ"
 for src in demo.cpp "$ROOT"/src/render/*.cpp; do
     xcrun clang++ -std=c++17 -O2 -I. -I"$ROOT/include" -I"$ROOT/src" -c "$src" -o "$OBJ/$(basename "$src" .cpp).o"
 done
-xcrun swiftc -O -swift-version 5 -import-objc-header DemoBridge.h Audio.swift Drums.swift DrumModel.swift Display.swift Lamps.swift Fixtures.swift Rig.swift Show.swift Web.swift Relay.swift Tiles.swift Autopilot.swift Style.swift Views.swift Live.swift main.swift \
+xcrun swiftc -O -swift-version 5 -import-objc-header DemoBridge.h Audio.swift Drums.swift DrumModel.swift Display.swift Lamps.swift Fixtures.swift Rig.swift Show.swift Web.swift Relay.swift Screen.swift Tiles.swift Autopilot.swift Style.swift Views.swift Live.swift main.swift \
     "$OBJ"/*.o -lc++ -o "$APP/Contents/MacOS/Show Control"
 cp Info.plist "$APP/Contents/Info.plist"
 # The Matter helper runs from Application Support: macOS holds back anything the app starts from
@@ -23,6 +23,8 @@ rsync -a --delete --exclude .matter matter/ "$HELPER/"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP/Contents/Resources/web"
 cp web/index.html "$APP/Contents/Resources/web/"
+mkdir -p "$APP/Contents/Resources/screen"
+cp screen/index.html screen/three.min.js "$APP/Contents/Resources/screen/"
 sips -z 180 180 AppIcon.png --out "$APP/Contents/Resources/web/icon.png" >/dev/null
 for f in Exo2.0-SemiBold.otf Sora-Regular.ttf Sora-Light.ttf; do
     if [ -f "$HOME/Library/Fonts/$f" ]; then cp "$HOME/Library/Fonts/$f" "$APP/Contents/Resources/Fonts/"; else echo "Missing font $f"; fi

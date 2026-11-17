@@ -59,7 +59,7 @@ final class Show: ObservableObject {
         didSet { UserDefaults.standard.set(master, forKey: "master"); pushPlan(); applyTiles() }
     }
     @Published var blackout = false { didSet { wake(); pushPlan(); applyTiles() } }
-    @Published var flash = false { didSet { wake(); pushPlan(); applyTiles(); flashOthers() } }
+    @Published var flash = false { didSet { wake(); pushPlan(); applyTiles(); flashOthers(); screen.flash(flash) } }
     private var flashTimer: Timer?
     // The display and TILES go white too, told again every 50 ms while held: each lets go by
     // itself soon after the last (the display in 0.4 s, TILES as its hit fades).
@@ -94,6 +94,7 @@ final class Show: ObservableObject {
     private func strike() {
         guard impacts, !blackout else { return }
         rig.impact()
+        screen.impact()
         let link = link, tiles = rig.tiles, white: [UInt8] = Array("LMDF".utf8) + [1], dark: [UInt8] = Array("LMDF".utf8) + [0]
         link.send(white)
         tiles.flash(true)
@@ -112,12 +113,12 @@ final class Show: ObservableObject {
         }
     }
     @Published var palette: Autopilot.Palette? {
-        didSet { UserDefaults.standard.set(palette?.rawValue, forKey: "autopilotPalette"); applyAutopilot() }
+        didSet { UserDefaults.standard.set(palette?.rawValue, forKey: "autopilotPalette"); applyAutopilot(); screenPalette() }
     }
     @Published var paletteColour = RGB(255, 0, 255) {
         didSet {
             UserDefaults.standard.set(paletteColour.hex, forKey: "autopilotColour")
-            if palette == .single { applyAutopilot() }
+            if palette == .single { applyAutopilot(); screenPalette() }
         }
     }
     // What's running, as the macros turn it, in the palette if one's picked.
@@ -145,6 +146,31 @@ final class Show: ObservableObject {
 
     private let link: Link
     private let analyzer: Analyzer
+    // This Mac's own screen (Screen.swift): scene "auto" or one of screen/index.html's, 240 or 480 lines.
+    let screen: ScreenShow
+    @Published private(set) var screenOpen = false
+    @Published var screenScene = UserDefaults.standard.string(forKey: "screenScene") ?? "auto" {
+        didSet { UserDefaults.standard.set(screenScene, forKey: "screenScene"); screenSettings() }
+    }
+    @Published var screenRes = UserDefaults.standard.object(forKey: "screenRes") as? Int ?? 240 {
+        didSet { UserDefaults.standard.set(screenRes, forKey: "screenRes"); screenSettings() }
+    }
+    @Published var screenCaption = UserDefaults.standard.object(forKey: "screenCaption") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(screenCaption, forKey: "screenCaption"); screenSettings() }
+    }
+    private func screenSettings() { screen.apply(["scene": screenScene, "res": screenRes, "caption": screenCaption]) }
+    // The screen with the menu bar (the main display) unless another is picked.
+    func toggleScreen(on index: Int = 0) {
+        if screenOpen { screen.close(); return }
+        let all = NSScreen.screens
+        guard !all.isEmpty else { return }
+        screenSettings()
+        screen.open(on: all[min(index, all.count - 1)])
+        screen.setSong(title: title, artist: artist, colours: screenColours)
+    }
+    private var cover: [RGB] = []
+    private func screenPalette() { if screenOpen { screen.setSong(title: "", artist: "", colours: screenColours) } }
+    private var screenColours: [RGB] { palette == .single ? [paletteColour, paletteColour.scaled(0.5), RGB.mix(paletteColour, RGB(255, 255, 255), 0.5)] : cover }
     private let capture: Capture
     private let watcher = NowPlayingWatcher()
     let rig: Rig
@@ -195,6 +221,7 @@ final class Show: ObservableObject {
     }
 
     private let displayOwn = 0.045
+    private let screenOwn = 0.04  // a frame to draw, a frame for the compositor
 
     init() {
         let d = UserDefaults.standard
@@ -219,14 +246,30 @@ final class Show: ObservableObject {
         let link = Link(host: d.string(forKey: "host"))
         self.link = link
         let displayOwn = self.displayOwn
-        analyzer = Analyzer { packet in Sync.later(own: displayOwn) { link.send(packet) } }
+        let screen = ScreenShow(), screenOwn = self.screenOwn
+        self.screen = screen
+        analyzer = Analyzer { packet in
+            Sync.later(own: displayOwn) { link.send(packet) }
+            if screen.wanted { Sync.later(own: screenOwn) { DispatchQueue.main.async { screen.feed(packet) } } }
+        }
         capture = Capture(analyzer: analyzer)
         rig = Rig(analyzer: analyzer)
         analyzer.onKick = { [weak self] s, played, period in
+            if screen.wanted { Sync.later(own: screenOwn) { DispatchQueue.main.async { screen.kick(s) } } }
             self?.analyzer.sendKick()
             self?.rig.kick(s, played: played, period: period)
         }
-        analyzer.onAccent = { [weak self] s in self?.rig.accent(s) }
+        analyzer.onAccent = { [weak self] s in
+            if screen.wanted { Sync.later(own: screenOwn) { DispatchQueue.main.async { screen.accent(s) } } }
+            self?.rig.accent(s)
+        }
+        screen.onOpen = { [weak self] open in self?.screenOpen = open; if open { self?.wake() } }
+        screen.onSettings = { [weak self] m in
+            guard let self else { return }
+            if let v = m["scene"] as? String, v != self.screenScene { self.screenScene = v }
+            if let v = m["res"] as? Int, v != self.screenRes { self.screenRes = v }
+            if let v = m["caption"] as? Bool, v != self.screenCaption { self.screenCaption = v }
+        }
         analyzer.onImpact = { [weak self] in
             guard let self else { return }
             Sync.later(own: self.displayOwn) { DispatchQueue.main.async { self.strike() } }
@@ -261,6 +304,8 @@ final class Show: ObservableObject {
             if self.autopilot != nil { self.pilot.newSong(track.title + "\n" + track.artist) }
             if self.shuffling { self.shuffle() }
             if let image { self.rig.setCover(coverColours(image)) }
+            self.cover = image.map(coverColours) ?? []
+            self.screen.setSong(title: track.title, artist: track.artist, colours: self.screenColours)
             if let image {
                 let cover = rgb(image, size: 320), thumb = rgb(image, size: 64)
                 cover.withUnsafeBufferPointer { c in
@@ -382,7 +427,7 @@ final class Show: ObservableObject {
         if tilesName != rig.tiles.name { tilesName = rig.tiles.name }
         openAtLogin = SMAppService.mainApp.status == .enabled
         let now = Date()
-        if watcher.playing || capture.running || flash || windowVisible || now.timeIntervalSince(phoneWatching) < 60 { busyAt = now }
+        if watcher.playing || capture.running || flash || windowVisible || screenOpen || now.timeIntervalSince(phoneWatching) < 60 { busyAt = now }
         let rest = now.timeIntervalSince(busyAt) > 180
         if rest != asleep { asleep = rest }
         let r = analyzer.reading
