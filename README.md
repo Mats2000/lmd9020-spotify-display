@@ -240,6 +240,18 @@ of the cover's own strongest hues, dim to bright) or a fixed scheme: **Sentia** 
 Sentia pink, light blue), **Ice**, **Amber** or **Soft Club**.
 - **Off:** the card's normal solid background, even with the app running.
 
+### Launchkey MK4
+
+A Novation Launchkey MK4 plugged in joins the show (the TILES page, on by default): in its DAW
+mode (Novation's Programmer's Reference Guide) the 16 pads light with the music in the lamps'
+colours, one RGB colour each 30 times a second, a new pattern every 16 kicks (the spectrum
+across the pads, a light round the two rows, washes on the kicks, sparks on snares over a slow
+wave, the rows trading), and its screen shows the song. Flash whites them, Blackout darkens
+them, an impact bursts them. It's taken only while the music plays and handed back to its
+normal standalone mode ten quiet seconds after (and when the app quits); keys and knobs play
+as always, but the pads don't send their notes while the show has them. A hit pad flashes
+white and pokes the screen visualizer where it sits on the pads.
+
 ### This Mac's screen
 
 Below the preview, **Full screen** opens a visualizer on the Mac's own main display (also in

@@ -49,6 +49,7 @@ window.kick = (s) => { S.kick = Math.max(S.kick, 0.55 + 0.45 * s); scene().kick?
 window.accent = (s) => scene().accent?.(s);
 window.impact = () => { S.impact = 1; scene().impact?.(); director.impact(); };
 window.flash = (on) => { S.held = on; };
+window.hit = (x, y) => { S.kick = Math.max(S.kick, 0.8); scene().click?.(x, y); };
 window.song = (title, artist, colours) => {
   if (colours && colours.length) setPalette(colours);
   caption.show(title, artist);

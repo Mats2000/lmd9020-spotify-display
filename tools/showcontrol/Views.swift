@@ -618,7 +618,20 @@ struct TilesPage: View {
                     .frame(width: 360, alignment: .leading)
                 }
                 Text("Only while the music plays. TILES goes back to its own lights two seconds after the show stops; its pads still play notes underneath.")
-                    .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading).padding(.top, 36).padding(.bottom, 40)
+                    .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading).padding(.top, 36)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .lastTextBaseline) {
+                        SectionLabel(text: show.launchkeyName ?? "Launchkey MK4")
+                        Spacer()
+                        SentiaToggle(title: show.launchkeyOn ? "Its pads are the show's" : "Take over its pads", on: $show.launchkeyOn)
+                    }
+                    .frame(maxWidth: 520)
+                    Text(show.launchkeyName == nil
+                         ? "Not connected. Plug in a Launchkey MK4 and its 16 pads join the show."
+                         : "Its 16 pads play patterns from the music in the lamps' colours and its screen shows the song, while the music plays; ten quiet seconds after, it's back to normal. A hit pad flashes and pokes the screen visualizer. Keys and knobs play as always; the pads don't send notes while the show has them.")
+                        .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).frame(maxWidth: 520, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 32).padding(.bottom, 40)
             }
             .padding(.horizontal, 40)
         }

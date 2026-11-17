@@ -95,6 +95,12 @@ final class ScreenShow: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     func kick(_ s: Float) { if ready { web?.evaluateJavaScript("kick(\(s))", completionHandler: nil) } }
     func accent(_ s: Float) { if ready { web?.evaluateJavaScript("accent(\(s))", completionHandler: nil) } }
     func impact() { if ready { web?.evaluateJavaScript("impact()", completionHandler: nil) } }
+    // A pad (0-7 the top row, 8-15 the bottom) as a hit on the screen where it sits.
+    func hit(_ pad: Int) {
+        guard ready else { return }
+        let x = (Double(pad % 8) + 0.5) / 8 * 2 - 1, y = pad < 8 ? 0.4 : -0.4
+        web?.evaluateJavaScript("hit(\(x),\(y))", completionHandler: nil)
+    }
     func flash(_ on: Bool) { if ready { web?.evaluateJavaScript("flash(\(on))", completionHandler: nil) } }
 
     private func call(_ fn: String, _ args: [Any]) {

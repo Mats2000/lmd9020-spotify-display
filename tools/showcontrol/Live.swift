@@ -37,6 +37,7 @@ struct LivePage: View {
             status("Display", show.displayHeard)
             ForEach(show.fixtures) { f in status(f.kind == .govee ? "Lamp" : "Bulb", f.settings.on && !f.held && show.lampsOn, note: f.held ? "Alexa" : nil) }
             if show.tilesName != nil { status("TILES", show.tiles.on) }
+            if show.launchkeyName != nil { status("Launchkey", show.launchkeyOn) }
         }
     }
 

@@ -135,6 +135,10 @@ final class Show: ObservableObject {
     @Published var autoTier = Autopilot.Tier.groove
     let pilot: Autopilot
     @Published var tilesName: String?
+    @Published var launchkeyName: String?
+    @Published var launchkeyOn = UserDefaults.standard.object(forKey: "launchkey") as? Bool ?? true {
+        didSet { rig.launchkey.enabled = launchkeyOn }
+    }
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
 
     // The light open on the Lights page, and its look.
@@ -263,6 +267,8 @@ final class Show: ObservableObject {
             if screen.wanted { Sync.later(own: screenOwn) { DispatchQueue.main.async { screen.accent(s) } } }
             self?.rig.accent(s)
         }
+        // A Launchkey pad hit pokes the screen visualizer where it sits on the pads.
+        rig.launchkey.onPad = { pad in DispatchQueue.main.async { screen.hit(pad) } }
         screen.onOpen = { [weak self] open in self?.screenOpen = open; if open { self?.wake() } }
         screen.onSettings = { [weak self] m in
             guard let self else { return }
@@ -305,6 +311,7 @@ final class Show: ObservableObject {
             if self.shuffling { self.shuffle() }
             if let image { self.rig.setCover(coverColours(image)) }
             self.cover = image.map(coverColours) ?? []
+            self.rig.setTrack(track.title, track.artist)
             self.screen.setSong(title: track.title, artist: track.artist, colours: self.screenColours)
             if let image {
                 let cover = rgb(image, size: 320), thumb = rgb(image, size: 64)
@@ -425,6 +432,7 @@ final class Show: ObservableObject {
         wantFrames()
         speakerMs = Int(Sync.speakerDelay * 1000)
         if tilesName != rig.tiles.name { tilesName = rig.tiles.name }
+        if launchkeyName != rig.launchkey.name { launchkeyName = rig.launchkey.name }
         openAtLogin = SMAppService.mainApp.status == .enabled
         let now = Date()
         if watcher.playing || capture.running || flash || windowVisible || screenOpen || now.timeIntervalSince(phoneWatching) < 60 { busyAt = now }

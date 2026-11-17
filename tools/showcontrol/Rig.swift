@@ -31,6 +31,9 @@ final class Rig {
     let govee = GoveeLamps()
     let matter = MatterLights()
     let tiles = TilesLink()
+    let launchkey = LaunchkeyLink()
+    private var track = (title: "", artist: "")
+    func setTrack(_ title: String, _ artist: String) { queue.async { self.track = (title, artist) } }
     private let tilesOwn = 0.012  // USB MIDI and one LED chain write
     var onFrames: (([String: [RGB]], [RGB]) -> Void)?  // each light's colours now, and the open look's preview
     var onHeld: ((String) -> Void)?                     // someone else took this light
@@ -153,7 +156,7 @@ final class Rig {
 
     // An impact: lightning on every light, a double flicker over 0.45 s.
     private var impactAt = Date.distantPast
-    func impact() { queue.async { self.impactAt = Date() } }
+    func impact() { queue.async { self.impactAt = Date(); self.launchkey.impact() } }
     private func lightning(_ t: Double) -> Double {
         t < 0.06 ? 1 : t < 0.14 ? 0.08 : t < 0.26 ? 0.85 : max(0, 0.85 * (1 - (t - 0.26) / 0.19))
     }
@@ -174,6 +177,7 @@ final class Rig {
 
     func shutDown() {
         queue.sync {
+            launchkey.release()
             govee.stopAll()
             driving.removeAll()
         }
@@ -226,6 +230,8 @@ final class Rig {
             if !covered { self.flashAll(strength, heard: heard) }
             DispatchQueue.main.async { self.onKickHeard?() }
             self.tilesKick(strength, heard: heard)
+            let wait = heard - 0.012 - Sync.now  // the Launchkey: USB MIDI and its LEDs
+            if wait <= 0.003 { self.launchkey.kick(strength) } else { self.queue.asyncAfter(deadline: .now() + wait) { self.launchkey.kick(strength) } }
             self.heardKicks.removeAll { heard - $0 > 8 }
             self.heardKicks.append(heard)
             if period > 0.25 && period < 1.1, let grid = self.fit(period) { self.guessAhead(grid, from: heard) }
@@ -351,6 +357,7 @@ final class Rig {
             self.preview.accent(strength)
             for f in self.plan.fixtures where self.driving.contains(f.id) && f.settings.kick > 0 { self.engine(for: f).accent(strength) }
             self.tiles.noteAccent(strength)
+            self.launchkey.accent(strength)
         }
     }
 
@@ -462,6 +469,10 @@ final class Rig {
         // TILES: a frame each tick while the music plays (and the ten quiet seconds after).
         if plan.lampsOn && (r.playing || quietFor < 10) {
             tiles.frame(kick: 0, level: energy, bands: r.bands)
+            launchkey.frame(dt: dt, bands: r.bands, level: energy, colours: palette(for: plan.preview), flash: plan.flash,
+                            blackout: plan.blackout, title: track.title, artist: track.artist)
+        } else {
+            launchkey.release()
         }
         if !driving.isEmpty && now.timeIntervalSince(statusAt) > 3 {  // has anyone else taken a lamp?
             statusAt = now
