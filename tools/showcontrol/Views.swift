@@ -122,8 +122,9 @@ extension DisplayPage {
             SectionLabel(text: "This Mac's screen")
             HStack(spacing: 8) {
                 Chip(title: show.screenOpen ? "Close" : "Full screen", chosen: show.screenOpen) { show.toggleScreen() }
-                Chip(title: "240p", chosen: show.screenRes < 480) { show.screenRes = 240 }
-                Chip(title: "480p", chosen: show.screenRes >= 480) { show.screenRes = 480 }
+                Chip(title: "240p", chosen: show.screenRes == 240) { show.screenRes = 240 }
+                Chip(title: "480p", chosen: show.screenRes == 480) { show.screenRes = 480 }
+                Chip(title: "Native", chosen: show.screenRes == 0) { show.screenRes = 0 }
                 Chip(title: "Title", chosen: show.screenCaption) { show.screenCaption.toggle() }
             }
             HStack(spacing: 8) {

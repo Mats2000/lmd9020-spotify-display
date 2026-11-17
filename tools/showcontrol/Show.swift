@@ -146,7 +146,7 @@ final class Show: ObservableObject {
 
     private let link: Link
     private let analyzer: Analyzer
-    // This Mac's own screen (Screen.swift): scene "auto" or one of screen/index.html's, 240 or 480 lines.
+    // This Mac's own screen (Screen.swift): scene "auto" or one of screen/index.html's; 240 or 480 lines, 0 native.
     let screen: ScreenShow
     @Published private(set) var screenOpen = false
     @Published var screenScene = UserDefaults.standard.string(forKey: "screenScene") ?? "auto" {

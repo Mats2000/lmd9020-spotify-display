@@ -18,7 +18,7 @@ body.idle { cursor: none; }
 </head>
 <body>
 <div class="tag" id="name"></div>
-<div class="tag" id="help">1–5 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p · T title · H help · Esc close</div>
+<div class="tag" id="help">1–5 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p / native · T title · H help · Esc close</div>
 <script src="three.min.js"></script>
 <script>
 "use strict";
@@ -55,7 +55,7 @@ window.song = (title, artist, colours) => {
   if (settings.scene === "auto" && title) { autoAt = 0; step(1); }
 };
 const settings = { scene: "auto", res: 240, caption: true };
-window.settings = (s) => {
+window.configure = (s) => {
   const res = settings.res;
   Object.assign(settings, s);
   if (settings.res !== res) applyRes();
@@ -72,23 +72,30 @@ const low = new THREE.Vector2(320, 240);
 let rt = null;
 
 const postMat = new THREE.ShaderMaterial({
-  uniforms: { t: { value: null }, res: { value: low }, flash: { value: 0 }, fade: { value: 0 }, levels: { value: 31 }, soft: { value: 0 } },
+  uniforms: { t: { value: null }, res: { value: low }, flash: { value: 0 }, fade: { value: 0 }, levels: { value: 31 }, soft: { value: 0 }, dither: { value: 1 } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
   fragmentShader: `
-    uniform sampler2D t; uniform vec2 res; uniform float flash, fade, levels, soft; varying vec2 vUv;
+    uniform sampler2D t; uniform vec2 res; uniform float flash, fade, levels, soft, dither; varying vec2 vUv;
     float b2(vec2 a) { a = floor(a); return fract(dot(a, vec2(0.5, a.y * 0.75))); }
     float b4(vec2 a) { return b2(0.5 * a) * 0.25 + b2(a); }
     vec3 at(vec2 p) { return texture2D(t, (p + 0.5) / res).rgb; }
     void main() {
       vec2 p = floor(vUv * res);
       vec3 c = at(p);
-      if (soft > 0.5) {
+      if (soft > 1.5) {  // native: a glow round the bright parts
+        vec3 g = vec3(0.);
+        for (int i = 0; i < 12; i++) {
+          float a = float(i) * 0.5236, r = (mod(float(i), 2.) < 0.5 ? 1. : 2.3) * res.y / 200.;
+          g += max(at(p + vec2(cos(a), sin(a)) * r) - 0.5, 0.);
+        }
+        c += g * 0.11;
+      } else if (soft > 0.5) {
         vec3 n = at(p + vec2(1., 0.)) + at(p - vec2(1., 0.)) + at(p + vec2(0., 1.)) + at(p - vec2(0., 1.));
         c = c * 0.7 + n * 0.075 + max(n * 0.25 - 0.55, 0.) * 0.5;
         c *= 0.94 + 0.06 * mod(p.y, 2.);
       }
       c = mix(c * fade, vec3(1.), flash);
-      c = floor(c * levels + b4(p)) / levels;
+      c = floor(c * levels + mix(0.5, b4(p), dither)) / levels;
       gl_FragColor = vec4(c, 1.);
     }`,
   depthTest: false, depthWrite: false,
@@ -100,12 +107,13 @@ postScene.add(postQuad);
 
 // The PS1 material: vertices snapped to the low-res grid, affine texture mapping (uv times w,
 // divided back per pixel), one light, fog.
-const shared = { snap: { value: new THREE.Vector2(160, 120) }, fogColor: { value: new THREE.Color() },
+const shared = { snap: { value: new THREE.Vector2(160, 120) }, affine: { value: 1 }, fogColor: { value: new THREE.Color() },
   fogNear: { value: 20 }, fogFar: { value: 80 } };
 const VERT = `
   uniform vec2 snap; uniform float fogNear, fogFar;
-  varying vec2 vUvW; varying float vW, vFog, vLight; varying vec3 vCol;
+  varying vec2 vUvW, vUv; varying float vW, vFog, vLight; varying vec3 vCol;
   void main() {
+    vUv = uv;
     vec4 local = vec4(position, 1.);
     vec3 nn = normal;
     #ifdef USE_INSTANCING
@@ -128,11 +136,11 @@ const VERT = `
     #endif
   }`;
 const FRAG = `
-  uniform vec3 tint, fogColor; uniform sampler2D map; uniform float useMap, glow, opacity, fogMix; uniform vec2 repeat, offset;
-  varying vec2 vUvW; varying float vW, vFog, vLight; varying vec3 vCol;
+  uniform vec3 tint, fogColor; uniform sampler2D map; uniform float useMap, glow, opacity, fogMix, affine; uniform vec2 repeat, offset;
+  varying vec2 vUvW, vUv; varying float vW, vFog, vLight; varying vec3 vCol;
   void main() {
     vec3 c = tint * vCol;
-    if (useMap > 0.5) c *= texture2D(map, vUvW / vW * repeat + offset).rgb;
+    if (useMap > 0.5) c *= texture2D(map, (affine > 0.5 ? vUvW / vW : vUv) * repeat + offset).rgb;
     c *= mix(vLight, 1., glow);
     c = mix(c, fogColor, vFog * fogMix);
     gl_FragColor = vec4(c, opacity);
@@ -379,6 +387,7 @@ function makeCrystal() {
       for (let i = 2; i < sp.length; i += 3) { sp[i] += go; if (sp[i] > 40) sp[i] -= 240; }
       starGeo.attributes.position.needsUpdate = true;
       starMat.color.copy(pal(1)).lerp(WHITE, 0.6);
+      starMat.size = Math.max(2, low.y / 200);
       camera.position.set(input.x * 7, -input.y * 5, 34 - S.bass * 3);
       camera.lookAt(0, 0, 0);
       shared.fogColor.value.copy(pal(2)).multiplyScalar(0.05);
@@ -479,16 +488,19 @@ function choose(key) {
 }
 
 function applyRes() {
-  // A whole number of screen pixels per low-res pixel (1440 lines: 240 at 6, 480 at 3).
-  const H = (innerHeight || 3) * (devicePixelRatio || 1), want = settings.res >= 480 ? 480 : 240;
-  const h = Math.round(H / Math.max(1, Math.round(H / want))), w = Math.max(1, Math.round(h * (innerWidth || 4) / (innerHeight || 3)));
+  // Native: the screen's own pixels. Otherwise a whole number of them per pixel (1440 lines: 240 at 6, 480 at 3).
+  const hd = !settings.res, H = (innerHeight || 3) * (devicePixelRatio || 1), want = settings.res >= 480 ? 480 : 240;
+  const h = hd ? Math.round(H) : Math.round(H / Math.max(1, Math.round(H / want))), w = Math.max(1, Math.round(h * (innerWidth || 4) / (innerHeight || 3)));
   low.set(w, h);
   renderer.setSize(innerWidth, innerHeight, false);
   rt?.dispose();
-  rt = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
-  postMat.uniforms.levels.value = h > 300 ? 63 : 31;
-  postMat.uniforms.soft.value = h > 300 ? 1 : 0;
-  if (h > 300) shared.snap.value.set(w * 4, h * 4); else shared.snap.value.set(w / 2, h / 2);
+  const f = hd ? THREE.LinearFilter : THREE.NearestFilter;
+  rt = new THREE.WebGLRenderTarget(w, h, { minFilter: f, magFilter: f, samples: hd ? 4 : 0 });
+  postMat.uniforms.levels.value = hd ? 255 : h > 300 ? 63 : 31;
+  postMat.uniforms.soft.value = hd ? 2 : h > 300 ? 1 : 0;
+  postMat.uniforms.dither.value = hd ? 0 : 1;
+  shared.affine.value = hd ? 0 : 1;
+  if (h > 300) shared.snap.value.set(w * 64, h * 64); else shared.snap.value.set(w / 2, h / 2);
   caption.resize();
   use(current, false);
 }
@@ -514,6 +526,7 @@ const caption = (() => {
     g.fillStyle = "#fff"; g.fillText(text[0], 0, 0);
     g.font = `300 ${Math.round(s * 0.7)}px "Sora", sans-serif`;
     g.fillStyle = "rgba(255,255,255,0.75)"; g.fillText(text[1], 0, Math.round(s * 1.35));
+    tex.magFilter = tex.minFilter = settings.res ? THREE.NearestFilter : THREE.LinearFilter;
     tex.needsUpdate = true;
     const m = Math.round(low.y / 20);
     mesh.scale.set(canvas.width, canvas.height, 1);
@@ -576,7 +589,12 @@ addEventListener("keydown", (e) => {
   else if (k === "arrowright") choose(order[(order.indexOf(current) + 1) % order.length]);
   else if (k === "arrowleft") choose(order[(order.indexOf(current) + order.length - 1) % order.length]);
   else if (k === " ") S.key = true;
-  else if (k === "p") { settings.res = settings.res >= 480 ? 240 : 480; applyRes(); post({ res: settings.res }); tag(document.getElementById("name"), settings.res >= 480 ? "480p" : "240p", 1500); }
+  else if (k === "p") {
+    settings.res = settings.res === 240 ? 480 : settings.res === 480 ? 0 : 240;
+    applyRes();
+    post({ res: settings.res });
+    tag(document.getElementById("name"), settings.res ? settings.res + "p" : "Native", 1500);
+  }
   else if (k === "t") { settings.caption = !settings.caption; post({ caption: settings.caption }); }
   else if (k === "h") tag(document.getElementById("help"), null, 6000);
   else if (k === "escape") post({ close: true });

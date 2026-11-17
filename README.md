@@ -248,7 +248,8 @@ the menu bar menu), fed the same music data, kicks and cover colours as the LMD-
 the look of 90s consoles: everything rendered at 240 lines (or 480, softer), a whole number of
 screen pixels per pixel (a 1440-line ultrawide: 6 or 3), vertices snapped to that grid,
 textures mapped without perspective correction so they swim, and the colour dithered to 5 bits
-(6 at 480). Five scenes, all abstract:
+(6 at 480). **Native** draws the same scenes at the screen's own resolution instead: smoothed
+edges, true perspective, no dither, and a glow round the bright parts. Five scenes, all abstract:
 
 - **Polygon Sea:** a flat-shaded sea heaving with the bass, the spectrum rolling across it, a
   low-poly sun, rings spreading from each kick.
@@ -263,7 +264,7 @@ textures mapped without perspective correction so they swim, and the colour dith
 **Auto** moves to the next scene with each song (and every 2.5 minutes). On the screen: 1-5
 pick a scene (0 back to Auto, the arrows step), the pointer looks around, a drag steers, a
 click hits (a ripple, rings, a burst, a blob), the wheel sets the speed, space flashes white, P
-switches 240/480, T the song title, H the keys, Esc (or leaving full screen) closes it. Flash
+steps through 240, 480 and native, T the song title, H the keys, Esc (or leaving full screen) closes it. Flash
 and Impacts reach it too. While it's open the app doesn't sleep.
 
 ### The Live page

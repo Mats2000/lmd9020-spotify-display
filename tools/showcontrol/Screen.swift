@@ -79,7 +79,7 @@ final class ScreenShow: NSObject, WKScriptMessageHandler, NSWindowDelegate {
 
     func apply(_ s: [String: Any]) {
         settings = s
-        call("settings", [s])
+        call("configure", [s])
     }
     func setSong(title: String, artist: String, colours: [RGB]) {
         song = [title, artist, colours.map { [Int($0.r), Int($0.g), Int($0.b)] }]
