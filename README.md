@@ -291,9 +291,9 @@ demo effects rather than copied:
   streaming past.
 - **Dither Field:** metaballs and plasma in contour bands through the palette, the waveform
   drawn across.
-- **Light Grid:** a wall of big glowing tiles (fine, or a few huge ones) running light-show
-  patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing
-  checker, life stepping on the beat, wipes, sparkle, pulses from the middle.
+- **Light Grid:** a wall of hexagon panels edge to edge (fine, or a few huge ones) running
+  light-show patterns, a new one every 16 kicks: spectrum bars, hexagon ripples, rain, scanning
+  beams, a three-colour strobe, hex life stepping on the beat, wipes, sparkle, rings from the middle.
 - **Voxel Hills:** a flight low over terraced block hills, ridges rising with the spectrum
   (native draws it at half resolution).
 - **Rotozoom:** a tiled pattern turning and zooming, its colours cycling.
@@ -302,8 +302,10 @@ demo effects rather than copied:
 **Auto** moves to the next scene with each song (and every 2.5 minutes). On the screen: 1-9
 pick a scene (0 back to Auto, the arrows step), the pointer looks around, a drag steers, a
 click hits (a ripple, rings, a burst, a blob), the wheel sets the speed, space flashes white, P
-steps through 240, 480 and native, T the song title, H the keys, Esc (or leaving full screen) closes it. Flash
-and Impacts reach it too. While it's open the app doesn't sleep.
+steps through 240, 480 and native, T the song title, F the frame rate (and the slowest frame of each second), H the keys, Esc
+(or leaving full screen) closes it. Flash and Impacts reach it too. While it's open the app
+doesn't sleep. Every scene is built and drawn once offscreen in the first seconds, so a first
+switch to one doesn't stall on shader compiles.
 
 ### The Live page
 

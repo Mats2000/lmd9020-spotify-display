@@ -14,11 +14,13 @@ body.idle { cursor: none; }
 .tag { position: fixed; left: 28px; color: rgba(255, 255, 255, 0.72); pointer-events: none; transition: opacity 0.8s; }
 #name { top: 22px; font: 600 15px "Exo 2", sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
 #help { bottom: 22px; font: 300 12.5px "Sora", sans-serif; }
+#meter { top: 22px; left: auto; right: 28px; font: 300 12.5px "Sora", sans-serif; opacity: 0; }
 </style>
 </head>
 <body>
 <div class="tag" id="name"></div>
-<div class="tag" id="help">1–9 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p / native · T title · H help · Esc close</div>
+<div class="tag" id="meter"></div>
+<div class="tag" id="help">1–9 scenes · 0 auto · drag to look · click to hit · scroll for speed · space flash · P 240p / 480p / native · T title · F frame rate · H help · Esc close</div>
 <script src="three.min.js"></script>
 <script>
 "use strict";
@@ -28,7 +30,7 @@ const WHITE = new THREE.Color(1, 1, 1);
 const rand = (a, b) => a + Math.random() * (b - a);
 
 // The music, as Show Control hears it (already held back to land with the speakers).
-const S = { level: 0, energy: 0, target: new Float32Array(16), bands: new Float32Array(16), wave: new Float32Array(64),
+const S = { level: 0, energy: 0, target: new Float32Array(16), bands: new Float32Array(16), wave: new Float32Array(64), waveTarget: new Float32Array(64),
   bass: 0, mid: 0, high: 0, kick: 0, impact: 0, held: false, key: false, speed: 1 };
 let palette = [], paletteVersion = 0;
 const pal = (i) => palette[((i % palette.length) + palette.length) % palette.length];
@@ -43,7 +45,7 @@ setPalette([]);
 window.feed = (level, beat, bands, wave) => {
   S.level = level / 255;
   for (let i = 0; i < 16; i++) S.target[i] = (bands[i] || 0) / 255;
-  for (let i = 0; i < 64; i++) S.wave[i] = (wave[i] || 0) / 128;
+  for (let i = 0; i < 64; i++) S.waveTarget[i] = (wave[i] || 0) / 128;
 };
 window.kick = (s) => { S.kick = Math.max(S.kick, 0.55 + 0.45 * s); scene().kick?.(s); director.kick(); };
 window.accent = (s) => scene().accent?.(s);
@@ -525,9 +527,11 @@ function makeField() {
   };
 }
 
-// MARK: Light Grid: a wall of big tiles (fine, or a few huge ones) playing light-show patterns,
-// a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing checker,
-// life stepping on the beat, wipes, sparkle, pulses from the middle.
+// MARK: Light Grid: a wall of hexagon panels edge to edge (fine, or a few huge ones) playing
+// light-show patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a
+// three-colour strobe, hex life on the beat, wipes, sparkle, pulses from the middle.
+// Cells are rows of pointy-top hexagons, odd rows shifted half a panel right.
+const HR = Math.sqrt(3) / 2;
 function makeGrid() {
   const scene = new THREE.Scene();
   const mat = new THREE.ShaderMaterial({
@@ -535,23 +539,25 @@ function makeGrid() {
     vertexShader: FLATV,
     fragmentShader: `
       uniform sampler2D cells; uniform vec2 grid; varying vec2 vUv;
-      vec3 cellAt(vec2 c) {
-        if (c.x < 0. || c.y < 0. || c.x >= grid.x || c.y >= grid.y) return vec3(0.);
-        return texture2D(cells, (c + 0.5) / grid).rgb;
-      }
+      const float R = 0.8660254;
       void main() {
-        vec2 g = vUv * grid, c = floor(g), f = fract(g) - 0.5;
-        vec2 q = abs(f) - 0.4;
-        float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - 0.04;
-        float tile = 1. - smoothstep(-0.02, 0.02, d);
-        vec3 col = cellAt(c) * tile * (0.88 + 0.12 * (1. - length(f) * 1.6));
-        vec3 halo = vec3(0.);
-        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-          vec2 o = vec2(float(x), float(y));
-          float dd = length(g - (c + o + 0.5));
-          halo += cellAt(c + o) * exp(-dd * dd * 2.2);
+        // Half a panel cropped off each edge, so the zigzag never shows.
+        vec2 p = vec2(0.5 + vUv.x * (grid.x - 0.5), R * (0.5 + vUv.y * (grid.y - 1.)));
+        float j0 = floor(p.y / R - 0.5), bd = 9.;
+        vec2 cell = vec2(0.), loc = vec2(0.);
+        for (int k = 0; k <= 1; k++) {
+          float j = j0 + float(k), sh = mod(j, 2.) * 0.5, i = floor(p.x - sh);
+          vec2 o = p - vec2(i + 0.5 + sh, (j + 0.5) * R);
+          float d = dot(o, o);
+          if (d < bd) { bd = d; cell = vec2(i, j); loc = o; }
         }
-        col += halo * 0.3 * (1. - tile * 0.6) + vec3(0.03) * tile;
+        vec3 c = cell.x >= grid.x ? vec3(0.) : texture2D(cells, (cell + 0.5) / grid).rgb;
+        vec2 q = abs(loc);
+        float hd = max(q.x, dot(q, vec2(0.5, R)));  // 0 centre, 0.5 edge
+        // Panels meet edge to edge: only a faint seam and each one's own falloff tell them apart.
+        float aa = fwidth(hd), seam = smoothstep(0.5 - aa * 1.5, 0.5, hd);
+        float lift = 0.06 * smoothstep(0.5, 0.15, hd) * step(0., loc.y);  // upper half a touch brighter
+        vec3 col = c * (1. - hd * 0.36 + lift) * (1. - seam * 0.12) + vec3(0.03);
         gl_FragColor = vec4(col, 1.);
       }`,
     depthTest: false, depthWrite: false,
@@ -559,11 +565,11 @@ function makeGrid() {
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
   quad.frustumCulled = false;
   scene.add(quad);
-  let cols = 1, rows = 1, cells = new Float32Array(3), data, tex, big = false, aspect = 1.33;
+  let cols = 1, rows = 2, cells = new Float32Array(3), data, tex, big = false, aspect = 1.33;
   let prog = "bars", kicks = 0, hue = 0, quiet = 0, st = {};
   function layout() {
-    rows = big ? 4 : 12;
-    cols = Math.max(4, Math.round(rows * aspect));
+    rows = big ? 6 : 14;  // even, so life wraps cleanly
+    cols = Math.max(4, Math.round(aspect * (rows - 1) * HR + 0.5));
     cells = new Float32Array(cols * rows * 3);
     data = new Uint8Array(cols * rows * 4).fill(255);
     tex?.dispose();
@@ -580,6 +586,11 @@ function makeGrid() {
     const i = (y * cols + x) * 3;
     cells[i] = Math.max(cells[i], c.r * a); cells[i + 1] = Math.max(cells[i + 1], c.g * a); cells[i + 2] = Math.max(cells[i + 2], c.b * a);
   };
+  // Hex helpers: axial q, centre position, steps between panels, the six neighbours.
+  const aq = (x, y) => x - ((y - (y & 1)) >> 1);
+  const hx = (x, y) => x + (y & 1) * 0.5, hy = (y) => y * HR;
+  const steps = (x1, y1, x2, y2) => { const dq = aq(x1, y1) - aq(x2, y2), dr = y1 - y2; return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2; };
+  const NB = [[[1, 0], [-1, 0], [-1, -1], [0, -1], [-1, 1], [0, 1]], [[1, 0], [-1, 0], [0, -1], [1, -1], [0, 1], [1, 1]]];
   const ri = (n) => Math.floor(Math.random() * n);
   const col = (k) => pal(hue + k);
   const progs = {
@@ -601,7 +612,7 @@ function makeGrid() {
         for (const g of st.r || []) {
           g.r += dt * Math.max(cols, rows) * 0.55;
           for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-            const d = Math.abs(Math.hypot(x - g.x, y - g.y) - g.r);
+            const d = Math.abs(steps(x, y, g.x, g.y) - g.r);
             if (d < 0.8) put(x, y, g.c, (1 - d / 0.8) * Math.max(0, 1 - g.r / (cols * 0.8)));
           }
         }
@@ -619,14 +630,15 @@ function makeGrid() {
         st.hit = (st.hit || 0) * Math.exp(-dt * 6);
         for (let b = 0; b < 3; b++) {
           const x = (Math.sin(t * (0.7 + b * 0.31) * S.speed + b * 2.1) * 0.5 + 0.5) * (cols - 1);
-          for (let y = 0; y < rows; y++) for (let k = -1; k <= 1; k++) put(x + k, y, col(b).clone().lerp(WHITE, st.hit * 0.6), k ? 0.35 + st.hit * 0.4 : 1);
+          for (let y = 0; y < rows; y++) for (let k = -1; k <= 1; k++) put(x - (y & 1) * 0.5 + k, y, col(b).clone().lerp(WHITE, st.hit * 0.6), k ? 0.35 + st.hit * 0.4 : 1);
         }
       } },
-    checker: { decay: 5, kick() { st.p = 1 - (st.p || 0); st.n = (st.n || 0) + 1; st.f = 1; },
+    // No two neighbouring hexagons share a class of three; each kick lights the next class.
+    trio: { decay: 5, kick() { st.p = ((st.p || 0) + 1) % 3; st.f = 1; },
       frame(dt) {
         st.f = (st.f || 0) * Math.exp(-dt * 3);
-        const c = col(Math.floor((st.n || 0) / 4)), s = big ? 1 : 2;
-        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if ((Math.floor(x / s) + Math.floor(y / s)) % 2 === (st.p || 0)) put(x, y, c, st.f);
+        const p = st.p || 0, c = col(p);
+        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if ((((aq(x, y) - y) % 3) + 3) % 3 === p) put(x, y, c, st.f);
       } },
     life: { decay: 9,
       kick() {
@@ -635,9 +647,9 @@ function makeGrid() {
         const next = new Uint8Array(cols * rows);
         for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
           let k = 0;
-          for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) k += g[((y + j + rows) % rows) * cols + (x + i + cols) % cols];
+          for (const [i, j] of NB[y & 1]) k += g[((y + j + rows) % rows) * cols + (x + i + cols) % cols];
           const a = g[y * cols + x];
-          next[y * cols + x] = (a && (k === 2 || k === 3)) || (!a && k === 3) ? 1 : 0;
+          next[y * cols + x] = (a && (k === 3 || k === 4)) || (!a && k === 2) ? 1 : 0;
           n += next[y * cols + x];
         }
         st.still = n < 6 || next.every((v, i) => v === g[i]) ? (st.still || 0) + 1 : 0;
@@ -654,7 +666,7 @@ function makeGrid() {
         if (!w) return;
         w.pos += dt * (cols + rows) * 1.1;
         for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-          const k = [x + y, cols - x + y, x + rows - y, cols - x + rows - y][w.dir];
+          const px = hx(x, y), py = hy(y), k = [px + py, cols - px + py, px + rows - py, cols - px + rows - py][w.dir];
           if (k > w.pos - 2 && k <= w.pos) put(x, y, w.c, 1 - (w.pos - k) / 2);
         }
       } },
@@ -662,11 +674,11 @@ function makeGrid() {
       frame(dt) { for (let i = 0; i < S.high * cols * rows * dt * 6; i++) put(ri(cols), ri(rows), col(ri(3)), 1); } },
     pulse: { decay: 5, kick() { (st.p ||= []).push({ r: 0, c: col((st.n = (st.n || 0) + 1)) }); },
       frame(dt) {
-        const cx = (cols - 1) / 2, cy = (rows - 1) / 2;
+        const cx = cols >> 1, cy = rows >> 1;
         for (const p of st.p || []) {
-          p.r += dt * cols * 0.4;
+          p.r += dt * cols * 0.3;
           for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-            const d = Math.abs(Math.max(Math.abs(x - cx) * rows / cols * 1.8, Math.abs(y - cy)) * cols / rows / 1.8 - p.r);
+            const d = Math.abs(steps(x, y, cx, cy) - p.r);
             if (d < 0.7) put(x, y, p.c, 1 - d / 0.7);
           }
         }
@@ -705,8 +717,9 @@ function makeGrid() {
     },
     impact() { kicks = 0; change(true); for (let i = 0; i < cells.length; i++) cells[i] = 1; },
     click(nx, ny) {
-      const x = (nx * 0.5 + 0.5) * cols - 0.5, y = (ny * 0.5 + 0.5) * rows - 0.5;
-      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) put(x + i, y + j, WHITE, i || j ? 0.6 : 1);
+      const y = Math.round((ny * 0.5 + 0.5) * (rows - 1)), x = Math.round((nx * 0.5 + 0.5) * (cols - 0.5) - (y & 1) * 0.5);
+      put(x, y, WHITE, 1);
+      for (const [i, j] of NB[y & 1]) put(x + i, y + j, WHITE, 0.6);
       progs[prog].kick?.(1);
     },
   };
@@ -929,16 +942,23 @@ function choose(key) {
   if (key === "auto") tag(document.getElementById("name"), "Auto", 2500); else use(key);
 }
 
+const targets = {};
+let shownSize = "";
 function applyRes() {
   // Native: the screen's own pixels. Otherwise a whole number of them per pixel (1440 lines: 240 at 6, 480 at 3).
   const hd = !settings.res, H = (innerHeight || 3) * (devicePixelRatio || 1), want = settings.res >= 480 ? 480 : 240;
   const cap = built[current]?.maxLines || H;  // a heavy scene's limit, still a whole number of pixels
   const h = hd ? Math.round(H / Math.ceil(H / cap)) : Math.round(H / Math.max(1, Math.round(H / want))), w = Math.max(1, Math.round(h * (innerWidth || 4) / (innerHeight || 3)));
   low.set(w, h);
-  renderer.setSize(innerWidth, innerHeight, false);
-  rt?.dispose();
-  const f = hd ? THREE.LinearFilter : THREE.NearestFilter;
-  rt = new THREE.WebGLRenderTarget(w, h, { minFilter: f, magFilter: f, samples: hd ? 4 : 0 });
+  // Targets kept per size, and the canvas only reset when the window changes: both cost a frame.
+  const size = `${innerWidth}x${innerHeight}@${devicePixelRatio}`;
+  if (size !== shownSize) {
+    shownSize = size;
+    renderer.setSize(innerWidth, innerHeight, false);
+    for (const k in targets) { targets[k].dispose(); delete targets[k]; }
+  }
+  const key = `${w}x${h}${hd ? "n" : ""}`, f = hd ? THREE.LinearFilter : THREE.NearestFilter;
+  rt = targets[key] ||= new THREE.WebGLRenderTarget(w, h, { minFilter: f, magFilter: f, samples: hd ? 4 : 0 });
   postMat.uniforms.levels.value = hd ? 255 : h > 300 ? 63 : 31;
   postMat.uniforms.soft.value = hd ? 2 : h > 300 ? 1 : 0;
   postMat.uniforms.dither.value = hd ? 0 : 1;
@@ -1039,6 +1059,7 @@ addEventListener("keydown", (e) => {
     tag(document.getElementById("name"), settings.res ? settings.res + "p" : "Native", 1500);
   }
   else if (k === "t") { settings.caption = !settings.caption; post({ caption: settings.caption }); }
+  else if (k === "f") meter.on = !meter.on;
   else if (k === "h") tag(document.getElementById("help"), null, 6000);
   else if (k === "escape") post({ close: true });
   else return;
@@ -1048,13 +1069,40 @@ addEventListener("keyup", (e) => { if (e.key === " ") S.key = false; });
 
 // MARK: Frame
 
+// Every scene built and drawn once offscreen, one a frame after opening, so the first switch to
+// one doesn't stall on shader compiles.
+const cold = order.slice();
+function warm() {
+  if (t < 1 || !cold.length) return;
+  const key = cold.shift();
+  if (built[key]) return;
+  const s = built[key] = makers[key]();
+  s.resize?.(low.x / low.y);
+  if (s.camera.isPerspectiveCamera) { s.camera.aspect = low.x / low.y; s.camera.updateProjectionMatrix(); }
+  renderer.setRenderTarget(rt);
+  renderer.render(s.scene, s.camera);
+}
+// F: frames a second and the slowest frame of the last second.
+const meter = { on: false, n: 0, worst: 0, at: 0, el: document.getElementById("meter"),
+  frame(ms) {
+    this.n++; this.worst = Math.max(this.worst, ms);
+    const now = performance.now();
+    if (now - this.at < 1000) return;
+    if (this.on) { this.el.textContent = `${Math.round(this.n * 1000 / (now - this.at))} fps · slowest ${Math.round(this.worst)} ms · ${low.x}×${low.y}`; this.el.style.opacity = 1; }
+    else this.el.style.opacity = 0;
+    this.n = 0; this.worst = 0; this.at = now;
+  } };
+
 let last = performance.now(), t = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  meter.frame(now - last);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   t += dt;
   for (let i = 0; i < 16; i++) { const g = S.target[i]; S.bands[i] += (g - S.bands[i]) * Math.min(1, dt * (g > S.bands[i] ? 30 : 7)); }
+  // Packets come at 60 Hz with some jitter; easing in hides it on faster screens.
+  for (let i = 0; i < 64; i++) S.wave[i] += (S.waveTarget[i] - S.wave[i]) * Math.min(1, dt * 30);
   const avg = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += S.bands[i]; return s / (b - a); };
   S.bass = avg(0, 4); S.mid = avg(4, 10); S.high = avg(10, 16);
   S.energy += (S.level - S.energy) * Math.min(1, dt * 4);
@@ -1066,6 +1114,7 @@ function frame(now) {
   if (settings.scene === "auto" && (autoAt += dt) > 150) { autoAt = 0; step(1); }
   fade = Math.min(1, fade + dt * 1.6);
 
+  warm();
   const s = scene();
   s.update(dt, t);
   if (s.shots) { const v = director.frame(s.shots, t, dt); s.aim ? s.aim(v) : aim(s.camera, v); }
