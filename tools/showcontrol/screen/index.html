@@ -528,39 +528,54 @@ function makeField() {
 }
 
 // MARK: Light Grid: an LED wall of square tiles split by a hairline of black (fine, or a few huge
-// ones) playing light-show patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing checker,
-// life stepping on the beat, wipes, sparkle, pulses from the middle.
+// ones), seen from its foot: it leans back from the bottom of the screen and fades into the dark
+// at the top. Light-show patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning
+// beams, a strobing checker, life stepping on the beat, wipes, sparkle, pulses from the middle.
+const LEAN = 0.62, LENS = 0.42;  // the wall's lean back (radians) and the view's half-height slope
+function leanHit(qx, qy, aspect) {  // a screen point (-1..1) onto the wall: across, up its face
+  const sp = Math.sin(LEAN), cp = Math.cos(LEAN), dx = qx * aspect * LENS, dy = qy * LENS;
+  const t = -cp / (dy * sp - cp), y = dy * t, z = 1 - t;  // eye at 0, wall through (0, 0, -1)
+  return [dx * t, y * cp - z * sp];
+}
 function makeGrid() {
   const scene = new THREE.Scene();
   const mat = new THREE.ShaderMaterial({
-    uniforms: { cells: { value: null }, grid: { value: new THREE.Vector2(1, 1) }, cell: { value: 20 }, gap: { value: 1 },
-      offset: { value: new THREE.Vector2() } },
+    uniforms: { cells: { value: null }, grid: { value: new THREE.Vector2(1, 1) }, gap: { value: 1 },
+      aspect: { value: 1.33 }, origin: { value: new THREE.Vector2() }, scale: { value: 1 } },
     vertexShader: FLATV,
     fragmentShader: `
-      uniform sampler2D cells; uniform vec2 grid, offset; uniform float cell, gap; varying vec2 vUv;
+      uniform sampler2D cells; uniform vec2 grid, origin; uniform float gap, aspect, scale; varying vec2 vUv;
       void main() {
-        // In whole pixels, every tile the same size and every gap the same width.
-        vec2 p = floor(gl_FragCoord.xy) + offset, c = floor(p / cell), l = p - c * cell;
-        if (l.x < gap || l.y < gap) { gl_FragColor = vec4(0., 0., 0., 1.); return; }
+        vec2 q = vUv * 2. - 1.;
+        float sp = sin(${LEAN}), cp = cos(${LEAN}), dx = q.x * aspect * ${LENS}, dy = q.y * ${LENS};
+        float t = -cp / (dy * sp - cp);
+        vec2 g = vec2(dx * t, dy * t * cp - (1. - t) * sp) * scale + origin;
+        vec2 c = floor(g), f = fract(g), w = fwidth(g), gw = w * gap;
+        vec2 m = smoothstep(gw, gw + w, f);  // the black hairline, a pixel or two wide at any depth
         vec3 v = texture2D(cells, (c + 0.5) / grid).rgb;
-        float y = (l.y - gap) / (cell - gap - 1.);  // 0 bottom, 1 top
-        vec3 col = v * (0.8 + 0.24 * y);  // lit from above
-        col = mix(col, vec3(1.), (l.y >= cell - gap * 2. ? 0.22 : 0.) * min(1., dot(v, vec3(1.))));  // a bright top edge on lit tiles
-        gl_FragColor = vec4(col + vec3(0.035), 1.);
+        vec3 col = v * (0.8 + 0.24 * f.y);  // lit from above
+        col = mix(col, vec3(1.), step(1. - gw.y * 1.5, f.y) * 0.22 * min(1., dot(v, vec3(1.))));  // a bright top edge on lit tiles
+        col = (col + 0.035) * m.x * m.y;
+        gl_FragColor = vec4(col * mix(1., 0.4, smoothstep(0.25, 1., vUv.y)), 1.);  // into the dark at the top
       }`,
     depthTest: false, depthWrite: false,
   });
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
   quad.frustumCulled = false;
   scene.add(quad);
-  let cols = 1, rows = 1, cells = new Float32Array(3), data, tex, big = false, size = "";
+  let cols = 1, rows = 1, cells = new Float32Array(3), data, tex, big = false, size = "", x0 = 0, x1 = 1, sc = 1;
   let prog = "bars", kicks = 0, hue = 0, quiet = 0, st = {};
   function layout() {
-    const cell = Math.max(6, Math.round(low.y / (big ? 4 : 12)));
-    cols = Math.ceil(low.x / cell); rows = Math.ceil(low.y / cell);
-    mat.uniforms.cell.value = cell;
-    mat.uniforms.gap.value = Math.max(1, Math.round(cell / 60));
-    mat.uniforms.offset.value.set(Math.floor((cols * cell - low.x) / 2), Math.floor((rows * cell - low.y) / 2));
+    // Tiles square on the wall, sized by how many cross the bottom of the screen; enough of them
+    // to fill the wider, farther top.
+    const asp = low.x / low.y, [ub, vb] = leanHit(1, -1, asp), [ut, vt] = leanHit(1, 1, asp);
+    sc = Math.round((big ? 2.6 : 7) * asp) / (2 * ub);
+    cols = Math.ceil(2 * ut * sc) + 2; rows = Math.ceil((vt - vb) * sc) + 1;
+    x0 = Math.floor(cols / 2 - ub * sc); x1 = Math.ceil(cols / 2 + ub * sc) - 1;
+    mat.uniforms.aspect.value = asp;
+    mat.uniforms.scale.value = sc;
+    mat.uniforms.origin.value.set(cols / 2, -vb * sc);
+    mat.uniforms.gap.value = settings.res ? 1 : Math.max(1, Math.round(low.y / 700));
     cells = new Float32Array(cols * rows * 3);
     data = new Uint8Array(cols * rows * 4).fill(255);
     tex?.dispose();
@@ -581,15 +596,15 @@ function makeGrid() {
   const col = (k) => pal(hue + k);
   const progs = {
     bars: { decay: 16, frame() {
-      for (let x = 0; x < cols; x++) {
-        const h = S.bands[Math.min(15, Math.floor(x / cols * 16))] * rows * 1.15;
+      for (let x = 0; x < cols; x++) {  // spread across the foot; the wider top carries on the edge bands
+        const h = S.bands[Math.max(0, Math.min(15, Math.floor((x - x0) / (x1 - x0 + 1) * 16)))] * rows * 1.15;
         for (let y = 0; y < h; y++) put(x, y, h > 1 && y >= Math.floor(h) - 1 ? col(2).clone().lerp(WHITE, 0.55) : col(Math.floor(y / rows * 3)), 1);
       }
     } },
     mirror: { decay: 12, frame() {
       const mid = (rows - 1) / 2;
       for (let x = 0; x < cols; x++) {
-        const h = S.bands[Math.min(15, Math.floor(Math.abs(x - (cols - 1) / 2) / cols * 2 * 16))] * rows * 0.6;
+        const h = S.bands[Math.min(15, Math.floor(Math.abs(x - (cols - 1) / 2) / (x1 - x0 + 1) * 2 * 16))] * rows * 0.6;
         for (let y = 0; y < rows; y++) if (Math.abs(y - mid) < h) put(x, y, col(Math.abs(y - mid) > h - 1 ? 1 : 0), 1);
       }
     } },
@@ -702,7 +717,8 @@ function makeGrid() {
     },
     impact() { kicks = 0; change(true); for (let i = 0; i < cells.length; i++) cells[i] = 1; },
     click(nx, ny) {
-      const x = (nx * 0.5 + 0.5) * cols - 0.5, y = (ny * 0.5 + 0.5) * rows - 0.5;
+      const [u, v] = leanHit(nx, ny, low.x / low.y), [, vb] = leanHit(0, -1, low.x / low.y);
+      const x = u * sc + cols / 2 - 0.5, y = (v - vb) * sc - 0.5;
       for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) put(x + i, y + j, WHITE, i || j ? 0.6 : 1);
       progs[prog].kick?.(1);
     },
