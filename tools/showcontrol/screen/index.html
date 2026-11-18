@@ -527,49 +527,40 @@ function makeField() {
   };
 }
 
-// MARK: Light Grid: a wall of hexagon panels edge to edge (fine, or a few huge ones) playing
-// light-show patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a
-// three-colour strobe, hex life on the beat, wipes, sparkle, pulses from the middle.
-// Cells are rows of pointy-top hexagons, odd rows shifted half a panel right.
-const HR = Math.sqrt(3) / 2;
+// MARK: Light Grid: an LED wall of square tiles split by a hairline of black (fine, or a few huge
+// ones) playing light-show patterns, a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing checker,
+// life stepping on the beat, wipes, sparkle, pulses from the middle.
 function makeGrid() {
   const scene = new THREE.Scene();
   const mat = new THREE.ShaderMaterial({
-    uniforms: { cells: { value: null }, grid: { value: new THREE.Vector2(1, 1) } },
+    uniforms: { cells: { value: null }, grid: { value: new THREE.Vector2(1, 1) }, cell: { value: 20 }, gap: { value: 1 },
+      offset: { value: new THREE.Vector2() } },
     vertexShader: FLATV,
     fragmentShader: `
-      uniform sampler2D cells; uniform vec2 grid; varying vec2 vUv;
-      const float R = 0.8660254;
+      uniform sampler2D cells; uniform vec2 grid, offset; uniform float cell, gap; varying vec2 vUv;
       void main() {
-        // Half a panel cropped off each edge, so the zigzag never shows.
-        vec2 p = vec2(0.5 + vUv.x * (grid.x - 0.5), R * (0.5 + vUv.y * (grid.y - 1.)));
-        float j0 = floor(p.y / R - 0.5), bd = 9.;
-        vec2 cell = vec2(0.), loc = vec2(0.);
-        for (int k = 0; k <= 1; k++) {
-          float j = j0 + float(k), sh = mod(j, 2.) * 0.5, i = floor(p.x - sh);
-          vec2 o = p - vec2(i + 0.5 + sh, (j + 0.5) * R);
-          float d = dot(o, o);
-          if (d < bd) { bd = d; cell = vec2(i, j); loc = o; }
-        }
-        vec3 c = cell.x >= grid.x ? vec3(0.) : texture2D(cells, (cell + 0.5) / grid).rgb;
-        vec2 q = abs(loc);
-        float hd = max(q.x, dot(q, vec2(0.5, R)));  // 0 centre, 0.5 edge
-        // Panels meet edge to edge: only a faint seam and each one's own falloff tell them apart.
-        float aa = fwidth(hd), seam = smoothstep(0.5 - aa * 1.5, 0.5, hd);
-        float lift = 0.06 * smoothstep(0.5, 0.15, hd) * step(0., loc.y);  // upper half a touch brighter
-        vec3 col = c * (1. - hd * 0.36 + lift) * (1. - seam * 0.12) + vec3(0.03);
-        gl_FragColor = vec4(col, 1.);
+        // In whole pixels, every tile the same size and every gap the same width.
+        vec2 p = floor(gl_FragCoord.xy) + offset, c = floor(p / cell), l = p - c * cell;
+        if (l.x < gap || l.y < gap) { gl_FragColor = vec4(0., 0., 0., 1.); return; }
+        vec3 v = texture2D(cells, (c + 0.5) / grid).rgb;
+        float y = (l.y - gap) / (cell - gap - 1.);  // 0 bottom, 1 top
+        vec3 col = v * (0.8 + 0.24 * y);  // lit from above
+        col = mix(col, vec3(1.), (l.y >= cell - gap * 2. ? 0.22 : 0.) * min(1., dot(v, vec3(1.))));  // a bright top edge on lit tiles
+        gl_FragColor = vec4(col + vec3(0.035), 1.);
       }`,
     depthTest: false, depthWrite: false,
   });
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
   quad.frustumCulled = false;
   scene.add(quad);
-  let cols = 1, rows = 2, cells = new Float32Array(3), data, tex, big = false, aspect = 1.33;
+  let cols = 1, rows = 1, cells = new Float32Array(3), data, tex, big = false, size = "";
   let prog = "bars", kicks = 0, hue = 0, quiet = 0, st = {};
   function layout() {
-    rows = big ? 6 : 14;  // even, so life wraps cleanly
-    cols = Math.max(4, Math.round(aspect * (rows - 1) * HR + 0.5));
+    const cell = Math.max(6, Math.round(low.y / (big ? 4 : 12)));
+    cols = Math.ceil(low.x / cell); rows = Math.ceil(low.y / cell);
+    mat.uniforms.cell.value = cell;
+    mat.uniforms.gap.value = Math.max(1, Math.round(cell / 60));
+    mat.uniforms.offset.value.set(Math.floor((cols * cell - low.x) / 2), Math.floor((rows * cell - low.y) / 2));
     cells = new Float32Array(cols * rows * 3);
     data = new Uint8Array(cols * rows * 4).fill(255);
     tex?.dispose();
@@ -586,11 +577,6 @@ function makeGrid() {
     const i = (y * cols + x) * 3;
     cells[i] = Math.max(cells[i], c.r * a); cells[i + 1] = Math.max(cells[i + 1], c.g * a); cells[i + 2] = Math.max(cells[i + 2], c.b * a);
   };
-  // Hex helpers: axial q, centre position, steps between panels, the six neighbours.
-  const aq = (x, y) => x - ((y - (y & 1)) >> 1);
-  const hx = (x, y) => x + (y & 1) * 0.5, hy = (y) => y * HR;
-  const steps = (x1, y1, x2, y2) => { const dq = aq(x1, y1) - aq(x2, y2), dr = y1 - y2; return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2; };
-  const NB = [[[1, 0], [-1, 0], [-1, -1], [0, -1], [-1, 1], [0, 1]], [[1, 0], [-1, 0], [0, -1], [1, -1], [0, 1], [1, 1]]];
   const ri = (n) => Math.floor(Math.random() * n);
   const col = (k) => pal(hue + k);
   const progs = {
@@ -612,7 +598,7 @@ function makeGrid() {
         for (const g of st.r || []) {
           g.r += dt * Math.max(cols, rows) * 0.55;
           for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-            const d = Math.abs(steps(x, y, g.x, g.y) - g.r);
+            const d = Math.abs(Math.hypot(x - g.x, y - g.y) - g.r);
             if (d < 0.8) put(x, y, g.c, (1 - d / 0.8) * Math.max(0, 1 - g.r / (cols * 0.8)));
           }
         }
@@ -630,15 +616,14 @@ function makeGrid() {
         st.hit = (st.hit || 0) * Math.exp(-dt * 6);
         for (let b = 0; b < 3; b++) {
           const x = (Math.sin(t * (0.7 + b * 0.31) * S.speed + b * 2.1) * 0.5 + 0.5) * (cols - 1);
-          for (let y = 0; y < rows; y++) for (let k = -1; k <= 1; k++) put(x - (y & 1) * 0.5 + k, y, col(b).clone().lerp(WHITE, st.hit * 0.6), k ? 0.35 + st.hit * 0.4 : 1);
+          for (let y = 0; y < rows; y++) for (let k = -1; k <= 1; k++) put(x + k, y, col(b).clone().lerp(WHITE, st.hit * 0.6), k ? 0.35 + st.hit * 0.4 : 1);
         }
       } },
-    // No two neighbouring hexagons share a class of three; each kick lights the next class.
-    trio: { decay: 5, kick() { st.p = ((st.p || 0) + 1) % 3; st.f = 1; },
+    checker: { decay: 5, kick() { st.p = 1 - (st.p || 0); st.n = (st.n || 0) + 1; st.f = 1; },
       frame(dt) {
         st.f = (st.f || 0) * Math.exp(-dt * 3);
-        const p = st.p || 0, c = col(p);
-        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if ((((aq(x, y) - y) % 3) + 3) % 3 === p) put(x, y, c, st.f);
+        const c = col(Math.floor((st.n || 0) / 4)), s = big ? 1 : 2;
+        for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if ((Math.floor(x / s) + Math.floor(y / s)) % 2 === (st.p || 0)) put(x, y, c, st.f);
       } },
     life: { decay: 9,
       kick() {
@@ -647,9 +632,9 @@ function makeGrid() {
         const next = new Uint8Array(cols * rows);
         for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
           let k = 0;
-          for (const [i, j] of NB[y & 1]) k += g[((y + j + rows) % rows) * cols + (x + i + cols) % cols];
+          for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) k += g[((y + j + rows) % rows) * cols + (x + i + cols) % cols];
           const a = g[y * cols + x];
-          next[y * cols + x] = (a && (k === 3 || k === 4)) || (!a && k === 2) ? 1 : 0;
+          next[y * cols + x] = (a && (k === 2 || k === 3)) || (!a && k === 3) ? 1 : 0;
           n += next[y * cols + x];
         }
         st.still = n < 6 || next.every((v, i) => v === g[i]) ? (st.still || 0) + 1 : 0;
@@ -666,7 +651,7 @@ function makeGrid() {
         if (!w) return;
         w.pos += dt * (cols + rows) * 1.1;
         for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-          const px = hx(x, y), py = hy(y), k = [px + py, cols - px + py, px + rows - py, cols - px + rows - py][w.dir];
+          const k = [x + y, cols - x + y, x + rows - y, cols - x + rows - y][w.dir];
           if (k > w.pos - 2 && k <= w.pos) put(x, y, w.c, 1 - (w.pos - k) / 2);
         }
       } },
@@ -674,11 +659,11 @@ function makeGrid() {
       frame(dt) { for (let i = 0; i < S.high * cols * rows * dt * 6; i++) put(ri(cols), ri(rows), col(ri(3)), 1); } },
     pulse: { decay: 5, kick() { (st.p ||= []).push({ r: 0, c: col((st.n = (st.n || 0) + 1)) }); },
       frame(dt) {
-        const cx = cols >> 1, cy = rows >> 1;
+        const cx = (cols - 1) / 2, cy = (rows - 1) / 2;
         for (const p of st.p || []) {
-          p.r += dt * cols * 0.3;
+          p.r += dt * cols * 0.4;
           for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-            const d = Math.abs(steps(x, y, cx, cy) - p.r);
+            const d = Math.abs(Math.max(Math.abs(x - cx) * rows / cols * 1.8, Math.abs(y - cy)) * cols / rows / 1.8 - p.r);
             if (d < 0.7) put(x, y, p.c, 1 - d / 0.7);
           }
         }
@@ -699,7 +684,7 @@ function makeGrid() {
   layout();
   return {
     scene, camera: flat,
-    resize(a) { if (Math.abs(a - aspect) > 0.01) { aspect = a; layout(); } },
+    resize() { if (`${low.x}x${low.y}` !== size) { size = `${low.x}x${low.y}`; layout(); } },
     update(dt, t) {
       if ((quiet += dt) > 12) { quiet = 0; change(false); }
       const k = Math.exp(-dt * progs[prog].decay * (0.6 + S.speed * 0.4));
@@ -717,9 +702,8 @@ function makeGrid() {
     },
     impact() { kicks = 0; change(true); for (let i = 0; i < cells.length; i++) cells[i] = 1; },
     click(nx, ny) {
-      const y = Math.round((ny * 0.5 + 0.5) * (rows - 1)), x = Math.round((nx * 0.5 + 0.5) * (cols - 0.5) - (y & 1) * 0.5);
-      put(x, y, WHITE, 1);
-      for (const [i, j] of NB[y & 1]) put(x + i, y + j, WHITE, 0.6);
+      const x = (nx * 0.5 + 0.5) * cols - 0.5, y = (ny * 0.5 + 0.5) * rows - 0.5;
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) put(x + i, y + j, WHITE, i || j ? 0.6 : 1);
       progs[prog].kick?.(1);
     },
   };

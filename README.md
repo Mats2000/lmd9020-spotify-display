@@ -291,9 +291,10 @@ demo effects rather than copied:
   streaming past.
 - **Dither Field:** metaballs and plasma in contour bands through the palette, the waveform
   drawn across.
-- **Light Grid:** a wall of hexagon panels edge to edge (fine, or a few huge ones) running
-  light-show patterns, a new one every 16 kicks: spectrum bars, hexagon ripples, rain, scanning
-  beams, a three-colour strobe, hex life stepping on the beat, wipes, sparkle, rings from the middle.
+- **Light Grid:** an LED wall of square tiles split by a hairline of black (fine, or a few
+  huge ones), every tile and gap the same whole number of pixels, running light-show patterns,
+  a new one every 16 kicks: spectrum bars, rings, rain, scanning beams, a strobing checker,
+  life stepping on the beat, wipes, sparkle, pulses from the middle.
 - **Voxel Hills:** a flight low over terraced block hills, ridges rising with the spectrum
   (native draws it at half resolution).
 - **Rotozoom:** a tiled pattern turning and zooming, its colours cycling.
