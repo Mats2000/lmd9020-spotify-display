@@ -594,17 +594,19 @@ function makeGrid() {
   };
   const ri = (n) => Math.floor(Math.random() * n);
   const col = (k) => pal(hue + k);
+  // Bands sit high most of the time: a curve keeps the wall mostly dark, only peaks reach the top.
+  const lift = (b) => Math.pow(b, 2.2) * 0.95;
   const progs = {
     bars: { decay: 16, frame() {
       for (let x = 0; x < cols; x++) {  // spread across the foot; the wider top carries on the edge bands
-        const h = S.bands[Math.max(0, Math.min(15, Math.floor((x - x0) / (x1 - x0 + 1) * 16)))] * rows * 1.15;
+        const h = lift(S.bands[Math.max(0, Math.min(15, Math.floor((x - x0) / (x1 - x0 + 1) * 16)))]) * rows;
         for (let y = 0; y < h; y++) put(x, y, h > 1 && y >= Math.floor(h) - 1 ? col(2).clone().lerp(WHITE, 0.55) : col(Math.floor(y / rows * 3)), 1);
       }
     } },
     mirror: { decay: 12, frame() {
       const mid = (rows - 1) / 2;
       for (let x = 0; x < cols; x++) {
-        const h = S.bands[Math.min(15, Math.floor(Math.abs(x - (cols - 1) / 2) / (x1 - x0 + 1) * 2 * 16))] * rows * 0.6;
+        const h = lift(S.bands[Math.min(15, Math.floor(Math.abs(x - (cols - 1) / 2) / (x1 - x0 + 1) * 2 * 16))]) * rows * 0.5;
         for (let y = 0; y < rows; y++) if (Math.abs(y - mid) < h) put(x, y, col(Math.abs(y - mid) > h - 1 ? 1 : 0), 1);
       }
     } },
