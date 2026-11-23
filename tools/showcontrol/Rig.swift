@@ -361,15 +361,28 @@ final class Rig {
             self.preview.bass(strength)
             guard self.plan.lampsOn, !self.plan.blackout, !self.plan.flash else { return }
             let heard = Sync.heard(played)
-            for f in self.plan.fixtures where self.driving.contains(f.id) && f.kind == .govee {
+            for f in self.plan.fixtures where self.driving.contains(f.id) {
                 let id = f.id, work = { [weak self] in
                     guard let self, let f = self.plan.fixtures.first(where: { $0.id == id }), self.driving.contains(id) else { return }
-                    self.engine(for: f).bass(strength)
+                    if f.kind == .govee { self.engine(for: f).bass(strength) } else { self.swell(f, strength) }
                 }
                 let wait = heard - self.own(f) - Sync.now
                 if wait <= 0.003 { work() } else { self.queue.asyncAfter(deadline: .now() + wait, execute: work) }
             }
         }
+    }
+
+    // A bulb's swell: half way up its rhythm (with the note's strength), rising and falling slowly.
+    // In pulse and wash; never on a bulb still busy with a kick (its commands would queue).
+    private func swell(_ f: Fixture, _ strength: Float) {
+        let style = f.settings.bulbStyle, amount = Double(f.settings.kick) / 100
+        guard amount > 0, style == .pulse || style == .wash,
+              Date().timeIntervalSince(kickedAt[f.id] ?? .distantPast) > max(0.3, 2.2 * matter.trip(f.address)) else { return }
+        let l = f.settings.look, top = Double(l.rhythmHigh) / 100 * Double(f.settings.brightness) / 100
+        let base = level(f), high = min(1, base + (top - base) * min(1, amount) * (0.3 + 0.3 * Double(strength)))
+        matter.kick(f.address, level: high, then: base, fall: 0.9, rise: 0.2)
+        matterLevel[f.id] = base
+        live[f.id] = [(matterColour[f.id] ?? .black).scaled(high)]
     }
 
     // A snare or hat: a little detail, never the pulse.

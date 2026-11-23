@@ -146,7 +146,8 @@ switch (command) {
         // A kick never waits: straight up (no fade), then down to `then` as soon as the bulb has it,
         // so the flash lasts one round trip. A newer kick takes over the fall. With "off", the fall is
         // an off with no fade instead (On/Off "off with effect": delayed all off, variant 1), for bulbs
-        // that dim slowly whatever transition they're given.
+        // that dim slowly whatever transition they're given. A swell (a bass note) has a `rise`: up
+        // over that long, held there that long, then the fall.
         const kick = async (light, cmd) => {
             const part = light.part;
             if (part.stateOf(LevelControlClient) === undefined) return;
@@ -155,7 +156,9 @@ switch (command) {
             const opts = { optionsMask: {}, optionsOverride: {} };
             try {
                 light.ourOff = false;
-                await timed(light, () => part.commandsOf(LevelControlClient).moveToLevelWithOnOff({ level: level(cmd.level), transitionTime: 0, ...opts }));
+                const rise = Math.round((cmd.rise ?? 0) * 10);
+                await timed(light, () => part.commandsOf(LevelControlClient).moveToLevelWithOnOff({ level: level(cmd.level), transitionTime: rise, ...opts }));
+                if (rise) await new Promise(r => setTimeout(r, rise * 100));
                 if (cmd.then === undefined || gen !== light.kicks || !light.driving) return;
                 if (cmd.off && part.stateOf(OnOffClient) !== undefined) {
                     light.ourOff = true;

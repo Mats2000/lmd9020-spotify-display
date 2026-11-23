@@ -31,7 +31,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 
 // The music, as Show Control hears it (already held back to land with the speakers).
 const S = { level: 0, energy: 0, target: new Float32Array(16), bands: new Float32Array(16), wave: new Float32Array(64), waveTarget: new Float32Array(64),
-  bass: 0, mid: 0, high: 0, kick: 0, impact: 0, held: false, key: false, speed: 1 };
+  bass: 0, mid: 0, high: 0, kick: 0, impact: 0, note: 0, swell: 0, held: false, key: false, speed: 1 };
 let palette = [], paletteVersion = 0;
 const pal = (i) => palette[((i % palette.length) + palette.length) % palette.length];
 function setPalette(cs) {
@@ -49,6 +49,8 @@ window.feed = (level, beat, bands, wave) => {
 };
 window.kick = (s) => { S.kick = Math.max(S.kick, 0.55 + 0.45 * s); scene().kick?.(s); director.kick(); };
 window.accent = (s) => scene().accent?.(s);
+// A bass note: the whole picture swells with it and fades as the bass does, never a hit.
+window.swell = (s) => { S.note = Math.max(S.note, 0.5 + 0.5 * s); };
 window.impact = () => { S.impact = 1; scene().impact?.(); director.impact(); };
 window.flash = (on) => { S.held = on; };
 window.hit = (x, y) => { S.kick = Math.max(S.kick, 0.8); scene().click?.(x, y); };
@@ -75,10 +77,10 @@ const low = new THREE.Vector2(320, 240);
 let rt = null;
 
 const postMat = new THREE.ShaderMaterial({
-  uniforms: { t: { value: null }, res: { value: low }, flash: { value: 0 }, fade: { value: 0 }, levels: { value: 31 }, soft: { value: 0 }, dither: { value: 1 } },
+  uniforms: { t: { value: null }, res: { value: low }, flash: { value: 0 }, swell: { value: 0 }, fade: { value: 0 }, levels: { value: 31 }, soft: { value: 0 }, dither: { value: 1 } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
   fragmentShader: `
-    uniform sampler2D t; uniform vec2 res; uniform float flash, fade, levels, soft, dither; varying vec2 vUv;
+    uniform sampler2D t; uniform vec2 res; uniform float flash, swell, fade, levels, soft, dither; varying vec2 vUv;
     float b2(vec2 a) { a = floor(a); return fract(dot(a, vec2(0.5, a.y * 0.75))); }
     float b4(vec2 a) { return b2(0.5 * a) * 0.25 + b2(a); }
     vec3 at(vec2 p) { return texture2D(t, (p + 0.5) / res).rgb; }
@@ -97,6 +99,7 @@ const postMat = new THREE.ShaderMaterial({
         c = c * 0.7 + n * 0.075 + max(n * 0.25 - 0.55, 0.) * 0.5;
         c *= 0.94 + 0.06 * mod(p.y, 2.);
       }
+      c *= 1. + swell * 0.45;  // a bass note: brighter all over, the bright parts most
       c = mix(c * fade, vec3(1.), flash);
       c = floor(c * levels + mix(0.5, b4(p), dither)) / levels;
       gl_FragColor = vec4(c, 1.);
@@ -1110,6 +1113,9 @@ function frame(now) {
   S.energy += (S.level - S.energy) * Math.min(1, dt * 4);
   S.kick *= Math.exp(-dt * 7);
   S.impact *= Math.exp(-dt * 3);
+  S.note *= Math.exp(-dt * 0.8);
+  const goal = S.note * (0.3 + 0.7 * Math.min(1, S.bass * 1.4));
+  S.swell += (goal - S.swell) * Math.min(1, dt * (goal > S.swell ? 9 : 2.5));
   S.speed += (input.warp - S.speed) * Math.min(1, dt * 3);
   input.x += (input.tx - input.x) * Math.min(1, dt * 3);
   input.y += (input.ty - input.y) * Math.min(1, dt * 3);
@@ -1127,6 +1133,7 @@ function frame(now) {
   postMat.uniforms.t.value = rt.texture;
   postMat.uniforms.fade.value = fade;
   postMat.uniforms.flash.value = S.held || S.key ? 1 : S.impact * 0.7;
+  postMat.uniforms.swell.value = S.swell;
   renderer.render(postScene, flat);
 }
 

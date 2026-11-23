@@ -618,8 +618,8 @@ final class MatterLights {
     func off(_ id: String) { send(["id": id, "off": true]) }
     // Straight to `level`, then down to `then` over `fall` seconds as soon as the light has it, or
     // with `off` straight off (no fade), for a strobe on a bulb that only dims slowly.
-    func kick(_ id: String, level: Double, then: Double, fall: Double, off: Bool = false) {
-        send(["id": id, "level": level, "then": then, "fall": fall, "kick": true, "off": off])
+    func kick(_ id: String, level: Double, then: Double, fall: Double, off: Bool = false, rise: Double = 0) {
+        send(["id": id, "level": level, "then": then, "fall": fall, "kick": true, "off": off, "rise": rise])
     }
     func save(_ id: String) { send(["id": id, "save": true]) }
     func restore(_ id: String) { send(["id": id, "restore": true]) }

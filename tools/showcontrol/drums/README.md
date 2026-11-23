@@ -38,8 +38,11 @@ a bass note look the same in its bands. So each kick it finds is judged:
 - **Within 0.1 s of the last kick** it's never a new kick: a bass note under it, or the same kick
   found twice.
 
-A bass note goes out as `.bass`: the lamps swell with it (up over ~0.1 s, then riding the sub as it
-fades) instead of flashing, and it doesn't step a movement or count as a beat.
+A bass note goes out as `.bass` and swells instead of flashing; it doesn't step a movement or
+count as a beat. The Govee lamp rises over ~0.1 s, then rides the sub as it fades. A Matter bulb in
+Pulse or Wash goes part way up its rhythm over 0.2 s, holds 0.2 s and falls over 0.9 s (skipped
+while it's still busy with a kick, or its commands queue). The Mac screen brightens all over,
+fading with the bass. TILES and the Launchkey take kicks only.
 
 Measured on two recordings (13 minutes): the clean four-to-the-floor stretches keep every kick, a
 sustained bass line loses its false kicks, and a busy bass-and-kick section comes out kick, note,

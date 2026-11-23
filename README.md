@@ -431,7 +431,8 @@ songs played here. On four minutes of songs it hadn't seen, it found 81% of the 
 its finds right, about 2 ms after each started; the earlier hand-made detector found 30%, 36% right,
 17 ms after. Each kick it finds is then told from a bass note: with the beater's click it goes out
 at once; without one, 43 ms of the low end decide it (a kick falls in pitch, a bass note holds), and
-a bass note makes the lamps swell with it instead of flashing (details in the drums README).
+a bass note makes the lamp, the bulb and the Mac screen swell with it instead of flashing
+(details in the drums README).
 Snares and hats come through as accents (extra sparkle, never the pulse). The earlier
 detector still runs for the tempo the bulb's guesses use. Every sound is timed by when Spotify played it (the
 capture's own timestamps), so a light flashes when the kick is *heard*: after the speakers' delay
