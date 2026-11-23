@@ -315,6 +315,7 @@ final class Show: ObservableObject {
             self?.analyzer.sendKick()
             self?.rig.kick(s, played: played, period: period)
         }
+        analyzer.onBass = { [weak self] s, played in self?.rig.bass(s, played: played) }
         analyzer.onAccent = { [weak self] s in
             if screen.wanted { Sync.later(own: screenOwn) { DispatchQueue.main.async { screen.accent(s) } } }
             self?.rig.accent(s)

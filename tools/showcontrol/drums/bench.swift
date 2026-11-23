@@ -25,7 +25,7 @@ enum Bench {
             }
             return out
         }
-        var hits: [String: [[Double]]] = ["kick": [], "snare": [], "hat": []]
+        var hits: [String: [[Double]]] = ["kick": [], "snare": [], "hat": [], "bass": []]
         var i = 0, n = 480
         let d = Drums()
         d.onHit = { k, s, at in hits["\(k)"]!.append([Double(i + n) / rate, at, Double(s)]) }
@@ -38,6 +38,6 @@ enum Bench {
         }
         try! JSONSerialization.data(withJSONObject: hits).write(to: URL(fileURLWithPath: a[2]))
         if a.count > 3 { try! dump.write(to: URL(fileURLWithPath: a[3])) }
-        print("\(hits["kick"]!.count) kicks, \(hits["snare"]!.count) snares, \(hits["hat"]!.count) hats")
+        print("\(hits["kick"]!.count) kicks, \(hits["bass"]!.count) bass notes, \(hits["snare"]!.count) snares, \(hits["hat"]!.count) hats")
     }
 }

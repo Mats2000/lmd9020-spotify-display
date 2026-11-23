@@ -9,9 +9,14 @@ import Accelerate
 import Foundation
 
 final class Drums {
-    enum Kind: Int { case kick, snare, hat }
-    // A hit (its strength 0...1) and when it started, on the clock push() was given.
+    enum Kind: Int { case kick, snare, hat, bass }
+    // A hit (its strength 0...1) and when it started, on the clock push() was given. A bass note
+    // the model took for a kick comes as .bass.
     var onHit: ((Kind, Float, Double) -> Void)?
+    // Each kick the model found, as judged (tools only): its click, and how much its low end's
+    // cycles lengthened after it (1: none).
+    var onJudged: ((_ click: Float, _ fall: Double, _ kick: Bool, _ at: Double) -> Void)?
+    static var clickKick: Float = 9, fallKick = 1.25, judgeHops = 16
     // Every step's measurements and the time they're for, to train the model (tools only).
     var onFeatures: (([Float], Double) -> Void)?
 
@@ -35,6 +40,27 @@ final class Drums {
     private var x = [Float](repeating: 0, count: size)
     private var re = [Float](repeating: 0, count: size / 2), im = [Float](repeating: 0, count: size / 2)
     private var power = [Float](repeating: 0, count: size / 2)
+    // A kick the model found, waiting to be told from a bass note by what its low end does next.
+    private struct Pending { var at: Double, strength: Float, click: Float, sent: Bool, hops = 0 }
+    private var pending: Pending?
+    private var clicks: [Float] = []  // the top bands' rise, the last few steps
+    private var lastKick = -1.0
+    // The low end (25-180 Hz) as a waveform, and when it last crossed zero upward: its pitch, cycle by cycle.
+    private struct Filter {
+        var b0: Float = 1, b1: Float = 0, b2: Float = 0, a1: Float = 0, a2: Float = 0, x1: Float = 0, x2: Float = 0, y1: Float = 0, y2: Float = 0
+        init() {}
+        init(low: Bool, hz: Double, rate: Double) {
+            let w = 2 * Double.pi * hz / rate, alpha = sin(w) / (2 * 0.7071), c = cos(w), a0 = 1 + alpha
+            b0 = Float((low ? 1 - c : 1 + c) / 2 / a0); b1 = Float((low ? 1 - c : -(1 + c)) / a0); b2 = b0
+            a1 = Float(-2 * c / a0); a2 = Float((1 - alpha) / a0)
+        }
+        mutating func run(_ x: Float) -> Float {
+            let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
+        }
+    }
+    private var lows = [Filter](repeating: Filter(), count: 3), lowLast: Float = 0, crossings: [Double] = []
 
     init() {
         setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))!
@@ -50,6 +76,7 @@ final class Drums {
             return lo..<hi
         }
         history = []
+        lows = [Filter(low: true, hz: 180, rate: r), Filter(low: true, hz: 180, rate: r), Filter(low: false, hz: 25, rate: r)]
         peak = [Float](repeating: -100, count: bandBins.count)
         lastRise = [Float](repeating: 0, count: bandBins.count)
     }
@@ -63,6 +90,12 @@ final class Drums {
             ring[at] = s
             at = (at + 1) % Drums.size
             clock += dt
+            let y = lows[2].run(lows[1].run(lows[0].run(s)))
+            if lowLast <= 0 && y > 0 {
+                crossings.append(clock - dt * Double(y / (y - lowLast)))
+                if crossings.count > 24 { crossings.removeFirst() }
+            }
+            lowLast = y
             sinceHop += 1
             if sinceHop == Drums.hop {
                 sinceHop = 0
@@ -119,6 +152,26 @@ final class Drums {
         }
         f[Drums.featureCount - 1] = total
         onFeatures?(f, clock)
+        // A kick's beater clicks in the top bands and its low end falls in pitch fast (150 Hz down to
+        // 50 within a few tens of ms); a bass note holds its pitch. Measured: drums/README.md.
+        clicks.insert(max(f[25], f[30], f[35]), at: 0)
+        if clicks.count > 4 { clicks.removeLast() }
+        if var p = pending {
+            p.hops += 1
+            pending = p
+            if p.hops >= Drums.judgeHops {
+                pending = nil
+                // The cycles since it started: the last against the first.
+                let cs = crossings.filter { $0 >= p.at - 0.004 }
+                let fall = cs.count >= 3 ? (cs[cs.count - 1] - cs[cs.count - 2]) / (cs[1] - cs[0]) : 1
+                let kick = p.sent || (fall >= Drums.fallKick && p.at - lastKick > 0.1)
+                onJudged?(p.click, fall, kick, p.at)
+                if !p.sent {
+                    if kick { lastKick = p.at }
+                    onHit?(kick ? .kick : .bass, p.strength, p.at)
+                }
+            }
+        }
         guard let model = DrumModel.current else { return }
         recent.insert(f, at: 0)
         if recent.count > model.steps { recent.removeLast() }
@@ -128,7 +181,12 @@ final class Drums {
             let gap = k == Kind.hat.rawValue ? 0.04 : 0.07
             guard clock - lastHit[k] > gap else { continue }
             lastHit[k] = clock
-            onHit?(Kind(rawValue: k)!, min(1, p[k]), clock - model.lead)
+            let at = clock - model.lead
+            guard k == Kind.kick.rawValue else { onHit?(Kind(rawValue: k)!, min(1, p[k]), at); continue }
+            // A clear click goes out now; a low thump alone waits to be judged.
+            let click = clicks.max() ?? 0, sent = click >= Drums.clickKick && at - lastKick > 0.1
+            if sent { lastKick = at; onHit?(.kick, min(1, p[k]), at) }
+            pending = Pending(at: at, strength: min(1, p[k]), click: click, sent: sent)
         }
     }
 }

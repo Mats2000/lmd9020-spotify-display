@@ -85,6 +85,7 @@ final class Analyzer {
                 self.onKick?(strength, at, self.tempoSure ? self.beatPeriod : 0)
             case .snare: self.onAccent?(strength)
             case .hat: self.onAccent?(strength * 0.6)
+            case .bass: self.onBass?(strength, at)
             }
         }
     }
@@ -144,6 +145,8 @@ final class Analyzer {
     private var onsets = [Float](repeating: 0, count: 768), onsetAt = 0, binRise: Float = 0, binSlices = 0, binsSinceTempo = 0
     private var beatPeriod = 0.0, nextBeat = 0.0, tempoSure = false
     var onAccent: ((Float) -> Void)?
+    // A bass note that started like a kick (on the audio thread): a swell, never a hit.
+    var onBass: ((_ strength: Float, _ played: Double) -> Void)?
 
     private func kick(_ s: Float) {
         if filtersAt != sampleRate {

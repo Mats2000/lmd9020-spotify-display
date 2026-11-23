@@ -55,7 +55,7 @@ final class Rig {
     private var lastStep: [String: Int] = [:], levelAt: [String: Date] = [:], kickedAt: [String: Date] = [:]
     private var matterColour: [String: RGB] = [:], matterLevel: [String: Double] = [:]
     private var cover: [RGB] = [RGB(255, 236, 210)]
-    private var bassPeak = 0.2
+    private var bassPeak = 0.2, subPeak = 0.2
     private var energy = 0.0, quietFor = 0.0, lastTick = Date(), statusAt = Date(), timingAt = Date()
     private var live: [String: [RGB]] = [:]
 
@@ -355,6 +355,23 @@ final class Rig {
         }
     }
 
+    // A bass note: the lamps swell with it, as close to when it's heard as their delay allows.
+    func bass(_ strength: Float, played: Double) {
+        queue.async {
+            self.preview.bass(strength)
+            guard self.plan.lampsOn, !self.plan.blackout, !self.plan.flash else { return }
+            let heard = Sync.heard(played)
+            for f in self.plan.fixtures where self.driving.contains(f.id) && f.kind == .govee {
+                let id = f.id, work = { [weak self] in
+                    guard let self, let f = self.plan.fixtures.first(where: { $0.id == id }), self.driving.contains(id) else { return }
+                    self.engine(for: f).bass(strength)
+                }
+                let wait = heard - self.own(f) - Sync.now
+                if wait <= 0.003 { work() } else { self.queue.asyncAfter(deadline: .now() + wait, execute: work) }
+            }
+        }
+    }
+
     // A snare or hat: a little detail, never the pulse.
     func accent(_ strength: Float) {
         queue.async {
@@ -417,6 +434,10 @@ final class Rig {
         let low = r.playing ? Double(r.bands[2...7].reduce(0) { $0 + Int($1) }) / (255 * 6) : 0
         bassPeak = max(low, bassPeak * exp(-dt / 6))
         let wobble = max(0, min(1, (low / max(0.12, bassPeak) - 0.35) / 0.65))
+        // The sub (40-120 Hz) against its own loud lately: how a bass note's swell rides and fades.
+        let subNow = r.playing ? Double(r.bands[0...2].reduce(0) { $0 + Int($1) }) / (255 * 3) : 0
+        subPeak = max(subNow, subPeak * exp(-dt / 6))
+        let sub = max(0, min(1, subNow / max(0.12, subPeak)))
 
         if preview.count != plan.previewSegments { preview = LampEngine(count: plan.previewSegments, look: plan.preview) }
         preview.look = plan.preview
@@ -424,6 +445,7 @@ final class Rig {
         preview.songStep = songStep
         preview.progress = progress
         preview.wobble = wobble
+        preview.sub = sub
         let shown = preview.frame(dt: dt, energy: r.playing ? energy : 0.35)
 
         for f in plan.fixtures {
@@ -449,6 +471,7 @@ final class Rig {
             e.songStep = songStep
             e.progress = progress
             e.wobble = wobble
+            e.sub = sub
             let struck = now.timeIntervalSince(impactAt)
             if struck < 0.45 {
                 if f.kind == .govee {

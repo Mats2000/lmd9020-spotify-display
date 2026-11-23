@@ -114,6 +114,8 @@ final class LampEngine {
     var songStep = 0
     var progress = 0.0  // how far into the song, 0...1 (the progress movement)
     var wobble = 0.0    // the bass against its own loud, 0...1, as fast as it moves (the wobble movement)
+    var sub = 0.0       // the sub against its own loud, 0...1: a bass note's swell follows it down
+    private var note = 0.0, swell = 0.0
     private var shownStep = 0, fromColour: RGB?, fade = 1.0
     private var songColour: RGB {
         let c = palette_, to = c[songStep % c.count]
@@ -151,6 +153,9 @@ final class LampEngine {
         }
     }
 
+    // A bass note: a swell, rising over ~0.1 s and riding the sub as it fades; nothing steps.
+    func bass(_ strength: Float) { note = max(note, 0.5 + 0.5 * Double(strength)) }
+
     // A snare or hat: detail on top of the kick's pulse.
     func accent(_ strength: Float) {
         switch look.movement {
@@ -177,6 +182,9 @@ final class LampEngine {
     // One frame: dt seconds since the last, energy 0...1 (the music's loudness).
     func frame(dt: Double, energy: Double) -> [RGB] {
         flash *= exp(-dt * 11)  // a sharp fall: the kick reads as a hit, not a swell
+        note *= exp(-dt * 0.8)
+        let goal = note * (0.3 + 0.7 * sub)
+        swell += (goal - swell) * min(1, dt * (goal > swell ? 9 : 2.5))
         if songStep != shownStep {
             let c = palette_
             fromColour = c[shownStep % c.count]
@@ -219,7 +227,7 @@ final class LampEngine {
                 line[i] = RGB.mix(c[k], c[(k + 1) % c.count], at - Double(Int(at)))
             }
         case .flexing:
-            let half = (0.15 + 0.55 * min(1, energy * 1.5) + 0.3 * flash) * Double(n)
+            let half = min(1, 0.15 + 0.55 * min(1, energy * 1.5) + 0.3 * flash + 0.3 * swell) * Double(n)
             for i in 0..<n where Double(i) < half { line[i] = barColour.scaled(i == Int(half) ? half - Double(Int(half)) : 1) }
         case .stacking:
             for i in 0..<min(stacked, n) { line[i] = c[i % c.count] }
@@ -282,7 +290,7 @@ final class LampEngine {
         }
 
         // Brightness with the rhythm: from rhythmLow, quiet, to rhythmHigh on the beat.
-        let drive = look.movement == .wobble ? min(1, 0.2 + 0.8 * wobble + 0.4 * flash) : min(1, 0.45 * min(1, energy * 1.5) + 0.75 * flash)
+        let drive = look.movement == .wobble ? min(1, 0.2 + 0.8 * wobble + 0.4 * flash) : min(1, 0.45 * min(1, energy * 1.5) + 0.75 * flash + 0.5 * swell)
         let level = (Double(look.rhythmLow) + Double(look.rhythmHigh - look.rhythmLow) * drive) / 100
         return place(line).map { $0.scaled(level) }
     }

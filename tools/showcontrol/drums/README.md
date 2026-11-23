@@ -23,3 +23,26 @@ The model learns against an answer key made offline, with hindsight, from the so
    `python train.py ../DrumModel.swift 3 rec1.feat rec1.key.json rec2.feat rec2.key.json ...`
 
 Needs `librosa`, `torch` and `demucs` in a Python environment of their own.
+
+## Kick or bass note
+
+The model alone takes some bass notes for kicks: at the moment a note starts, a sub-heavy kick and
+a bass note look the same in its bands. So each kick it finds is judged:
+
+- **A click** (the top bands, 600 Hz to 8 kHz, rising 9 dB or more within the last few steps): the
+  beater. It goes out at once.
+- **No click:** it waits 43 ms, watching the low end (25-180 Hz) as a waveform, cycle by cycle. A
+  kick falls in pitch fast (about 150 Hz down to 50), so its cycles lengthen: the last against the
+  first is 1.4-1.7 on clean kicks. A bass note holds its pitch: 1.0. At 1.25 or more it's a kick,
+  else a bass note. Shorter waits don't separate them (at 25 ms clean kicks read 1.1-1.3).
+- **Within 0.1 s of the last kick** it's never a new kick: a bass note under it, or the same kick
+  found twice.
+
+A bass note goes out as `.bass`: the lamps swell with it (up over ~0.1 s, then riding the sub as it
+fades) instead of flashing, and it doesn't step a movement or count as a beat.
+
+Measured on two recordings (13 minutes): the clean four-to-the-floor stretches keep every kick, a
+sustained bass line loses its false kicks, and a busy bass-and-kick section comes out kick, note,
+kick, note as the spectrogram shows it. The level-based measures tried first don't work: how far
+the low end falls in 43 ms is near 0 for kicks too, and a band ratio is too coarse at 47 Hz a bin.
+A loud bass under a kick can hide its pitch fall, which is why a click alone is enough.
