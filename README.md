@@ -404,7 +404,7 @@ prefetch, how long it took, the memory and stack left), every 30 s the render ti
 and moment, the level, Master, Blackout, Flash and Freeze, then the autopilot (its style, what it's
 running, Next look, the palette and macros), the scene pads and lights and TILES on or off; then
 Lights, Scenes and Display. Set a
-password on the Settings page (10 characters or more); a phone signs in once and keeps a long random
+password on the Settings page (4 characters or more); a phone signs in once and keeps a long random
 key (the Mac keeps only its hash). Five wrong tries lock sign-in for 30 s, doubling each time;
 "Sign out every phone" or a new password drops every key. In Safari, Share > Add to Home Screen
 makes it an app.

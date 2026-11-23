@@ -280,7 +280,7 @@ struct SettingsPage: View {
                         Text("At home also \(show.webAddress ?? "—")").font(.soraLight(12)).foregroundColor(Sentia.ink2).textSelection(.enabled)
                         Text(show.hasPassword ? "Phones sign in with the password set here." : "Set a password before a phone can sign in.")
                             .font(.soraLight(11.5)).foregroundColor(Sentia.ink2).padding(.top, 10)
-                        SecureField(show.hasPassword ? "New password" : "Password (10 characters or more)", text: $password)
+                        SecureField(show.hasPassword ? "New password" : "Password (4 characters or more)", text: $password)
                             .textFieldStyle(.plain).font(.sora(13))
                             .padding(.horizontal, 10).frame(height: 32)
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Sentia.line, lineWidth: 1))

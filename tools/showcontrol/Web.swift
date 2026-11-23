@@ -42,7 +42,7 @@ final class WebAuth {
     private static func hash(_ s: String) -> String { SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined() }
 
     func setPassword(_ p: String) -> Bool {
-        guard p.count >= 10 else { return false }
+        guard p.count >= 4 else { return false }
         let salt = Self.random(16)
         d.set(salt, forKey: "webSalt")
         d.set(derive(p, salt), forKey: "webPass")
@@ -51,17 +51,24 @@ final class WebAuth {
         return true
     }
 
-    // 200 and a new key, 401 wrong, 429 locked for now, 403 no password set yet.
+    // A short PIN for the Aleph bracelet on the home network: 2004 unless the "webPin" default says otherwise (empty turns it off). It is only ever checked here, on the Mac's own port: the web relay
+    // checks its own password and never sees it. Wrong guesses count against the same lockout as the password.
+    private var pin: String { d.string(forKey: "webPin") ?? "2004" }
+
+    // 200 and a new key, 401 wrong, 429 locked for now, 403 neither a password nor a PIN to check against.
     func signIn(_ p: String) -> (Int, String?) {
         lock.lock()
         defer { lock.unlock() }
-        guard let want = d.data(forKey: "webPass"), let salt = d.data(forKey: "webSalt") else { return (403, nil) }
         guard Date() >= lockedUntil else { return (429, nil) }
-        let got = derive(p, salt)
-        guard got.count == want.count, zip(got, want).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
-            fails += 1
-            if fails >= 5 { lockedUntil = Date().addingTimeInterval(min(3600, 30 * pow(2, Double(fails - 5)))) }
-            return (401, nil)
+        let pinOK = !pin.isEmpty && p == pin
+        if !pinOK {
+            guard let want = d.data(forKey: "webPass"), let salt = d.data(forKey: "webSalt") else { return (pin.isEmpty ? 403 : 401, nil) }
+            let got = derive(p, salt)
+            guard got.count == want.count, zip(got, want).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
+                fails += 1
+                if fails >= 5 { lockedUntil = Date().addingTimeInterval(min(3600, 30 * pow(2, Double(fails - 5)))) }
+                return (401, nil)
+            }
         }
         fails = 0
         let key = Self.random(32).map { String(format: "%02x", $0) }.joined()
